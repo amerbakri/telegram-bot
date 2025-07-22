@@ -1,16 +1,9 @@
 import os
-from flask import Flask
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import subprocess
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
@@ -27,9 +20,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if result.returncode == 0:
             for ext in ["mp4", "mkv", "webm"]:
-                if os.path.exists(f"video.{ext}"):
-                    await update.message.reply_video(open(f"video.{ext}", "rb"))
-                    os.remove(f"video.{ext}")
+                filename = f"video.{ext}"
+                if os.path.exists(filename):
+                    with open(filename, "rb") as video_file:
+                        await update.message.reply_video(video_file)
+                    os.remove(filename)
                     break
         else:
             await update.message.reply_text(f"🚫 لم أتمكن من تحميل الفيديو.\n📄 التفاصيل: {result.stderr}")
@@ -43,4 +38,3 @@ if __name__ == '__main__':
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 
     bot_app.run_polling()
-    app.run(host='0.0.0.0', port=8080)
