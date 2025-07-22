@@ -1,52 +1,46 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+from flask import Flask
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import subprocess
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN environment variable not set!")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً! أرسل رابط الفيديو 📎")
+    await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
 
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
-    keyboard = [
-        [
-            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{url}"),
-            InlineKeyboardButton("🎬 فيديو", callback_data=f"video|{url}")
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("اختر الصيغة:", reply_markup=reply_markup)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    choice, url = query.data.split("|")
-
-    if choice == "audio":
-        file_path = "output_audio.mp3"
-        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", file_path, url]
-    else:
-        file_path = "output_video.mp4"
-        cmd = ["yt-dlp", "-f", "mp4", "-o", file_path, url]
-
-    await query.edit_message_text(text="⏳ جاري التحميل...")
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    url = update.message.text.strip()
+    await update.message.reply_text("⏳ جاري تحميل الفيديو...")
 
     try:
-        subprocess.run(cmd, check=True)
-        await query.message.reply_document(open(file_path, "rb"))
+        result = subprocess.run(
+            ["yt-dlp", "-o", "video.%(ext)s", url],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            for ext in ["mp4", "mkv", "webm"]:
+                if os.path.exists(f"video.{ext}"):
+                    await update.message.reply_video(open(f"video.{ext}", "rb"))
+                    os.remove(f"video.{ext}")
+                    break
+        else:
+            await update.message.reply_text(f"🚫 لم أتمكن من تحميل الفيديو.\n📄 التفاصيل: {result.stderr}")
     except Exception as e:
-        await query.message.reply_text(f"❌ حدث خطأ: {e}")
-    finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        await update.message.reply_text(f"🚫 حصل خطأ: {e}")
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
+if __name__ == '__main__':
+    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+
+    bot_app.run_polling()
+    app.run(host='0.0.0.0', port=8080)
