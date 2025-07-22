@@ -1,21 +1,19 @@
 import os
+import subprocess
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
     ContextTypes,
     filters,
+    CallbackQueryHandler,
 )
-import subprocess
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 app = Flask(__name__)
-
-user_links = {}  # لتخزين الرابط مؤقتاً حسب المستخدم
 
 @app.route('/')
 def home():
@@ -24,71 +22,63 @@ def home():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
 
+# لما المستخدم يرسل الرابط، نرسل له خيارات
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    user_id = update.message.from_user.id
-    user_links[user_id] = url  # خزّن الرابط للمستخدم
 
     keyboard = [
         [
-            InlineKeyboardButton("تحميل الفيديو 🎥", callback_data='download_video'),
-            InlineKeyboardButton("تحميل الصوت 🎧", callback_data='download_audio'),
+            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{url}"),
+            InlineKeyboardButton("🎥 فيديو", callback_data=f"video|{url}"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("اختر ما تريد تحميله:", reply_markup=reply_markup)
+    await update.message.reply_text("اختر نوع التنزيل:", reply_markup=reply_markup)
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# هاندلر الرد على الضغط على الزر
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    user_id = query.from_user.id
-    url = user_links.get(user_id)
+    data = query.data.split("|")
+    choice = data[0]  # "audio" أو "video"
+    url = data[1]
 
-    if not url:
-        await query.edit_message_text("❌ لم يتم العثور على رابط. الرجاء إرسال الرابط أولاً.")
-        return
+    await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
 
-    if query.data == "download_video":
-        await query.edit_message_text("⏳ جاري تحميل الفيديو...")
-        cmd = ["yt-dlp", "-f", "bestvideo+bestaudio", "-o", "video.%(ext)s", url]
-        file_type = "video"
+    if choice == "audio":
+        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
+        filename = "audio.mp3"
     else:
-        await query.edit_message_text("⏳ جاري تحميل الصوت...")
-        cmd = ["yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
-        file_type = "audio"
+        cmd = ["yt-dlp", "-o", "video.%(ext)s", url]
+        filename = None
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            # ابحث عن الملف المناسب
-            if file_type == "video":
-                exts = ["mp4", "mkv", "webm"]
-                for ext in exts:
-                    if os.path.exists(f"video.{ext}"):
-                        with open(f"video.{ext}", "rb") as f:
-                            await query.message.reply_video(f)
-                        os.remove(f"video.{ext}")
-                        break
-            else:
-                exts = ["mp3", "m4a", "webm"]
-                for ext in exts:
-                    if os.path.exists(f"audio.{ext}"):
-                        with open(f"audio.{ext}", "rb") as f:
-                            await query.message.reply_audio(f)
-                        os.remove(f"audio.{ext}")
-                        break
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        if choice == "video":
+            for ext in ["mp4", "mkv", "webm"]:
+                if os.path.exists(f"video.{ext}"):
+                    filename = f"video.{ext}"
+                    break
+
+        if filename and os.path.exists(filename):
+            with open(filename, "rb") as f:
+                if choice == "audio":
+                    await query.message.reply_audio(f)
+                else:
+                    await query.message.reply_video(f)
+            os.remove(filename)
         else:
-            await query.message.reply_text(f"🚫 لم أتمكن من التحميل.\n📄 التفاصيل: {result.stderr}")
-    except Exception as e:
-        await query.message.reply_text(f"🚫 حصل خطأ: {e}")
+            await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
+    else:
+        await query.message.reply_text(f"🚫 فشل التنزيل.\n{result.stderr}")
 
 if __name__ == '__main__':
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    bot_app.add_handler(CallbackQueryHandler(button))
+    bot_app.add_handler(CallbackQueryHandler(button_handler))
 
     bot_app.run_polling()
     app.run(host='0.0.0.0', port=8080)
