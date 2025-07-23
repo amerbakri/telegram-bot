@@ -1,6 +1,6 @@
 import os
 import subprocess
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -8,6 +8,7 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
     filters,
+    ChatMemberHandler,
 )
 import logging
 import re
@@ -17,6 +18,7 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 COOKIES_FILE = "cookies.txt"
+CHANNEL_USERNAME = "@gsm4x"  # قناة الاشتراك الإجباري
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
@@ -30,21 +32,54 @@ def is_valid_url(text):
     )
     return bool(pattern.match(text))
 
-# خريطة الجودات مع صيغة yt-dlp
 quality_map = {
-    "720": "best[height<=720]",
-    "480": "best[height<=480]",
-    "360": "best[height<=360]",
+    "720": "best[height<=720][ext=mp4]",
+    "480": "best[height<=480][ext=mp4]",
+    "360": "best[height<=360][ext=mp4]",
 }
+
+async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        if member.status not in ("left", "kicked"):
+            return True
+    except Exception as e:
+        logging.warning(f"Subscription check failed: {e}")
+    return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
+        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
         "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
     )
 
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    member: ChatMemberUpdated = update.chat_member
+    if member.new_chat_member.status == "member":
+        user = member.new_chat_member.user
+        await context.bot.send_message(
+            chat_id=update.chat_member.chat.id,
+            text=(
+                f"👋 أهلًا وسهلًا بك يا {user.first_name} 💫\n"
+                "🛠️ صيانة واستشارات وعروض ولا أحلى!\n"
+                "📥 أرسل رابط لتحميل الفيديو بأي جودة أو اسأل أي سؤال عن الصيانة والعروض في خدمات الجوال."
+            ),
+        )
+
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # فقط التعامل مع رسائل تحتوي روابط في المجموعات
+    if update.message.chat.type in ("group", "supergroup"):
+        if not update.message.text or not is_valid_url(update.message.text.strip()):
+            return  # تجاهل الرسائل غير المحتوية على روابط فيديو
+
     if not update.message or not update.message.text:
+        return
+
+    user_id = update.message.from_user.id
+    if not await check_subscription(user_id, context):
+        await update.message.reply_text(
+            f"⚠️ عذراً، يجب عليك الاشتراك في القناة {CHANNEL_USERNAME} لاستخدام هذا البوت."
+        )
         return
 
     text = update.message.text.strip()
@@ -88,9 +123,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "cancel":
-        # حذف رسالة الخيارات وأيضًا رسالة الرابط
         await query.edit_message_text("❌ تم إلغاء العملية بنجاح.")
-        # حذف رسالة الرابط الأصلية
         try:
             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
         except Exception:
@@ -107,7 +140,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
         return
 
-    # رسالة جاري التحميل
     await query.edit_message_text(text=f"⏳ جاري تحميل {action} بجودة {quality_or_key}...")
 
     filename = None
@@ -123,8 +155,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         filename = "audio.mp3"
     else:
-        # action == video
-        # اختار صيغة بناءً على الجودة مع fallback
         format_code = quality_map.get(quality, "best")
         cmd = [
             "yt-dlp",
@@ -158,16 +188,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             os.remove(filename)
 
-            # حذف رسالة الرابط
             try:
                 await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
             except Exception:
                 pass
 
-            # حذف الرابط من القاموس
             url_store.pop(key, None)
 
-            # حذف رسالة "جاري التحميل" (الرسالة المعدلة)
             try:
                 await query.delete_message()
             except Exception:
@@ -175,7 +202,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
     else:
-        # لو الخطأ بسبب عدم وجود جودة محددة، جرب جودة أفضل بدون تحديد صيغة
         if "Requested format is not available" in result.stderr:
             await query.message.reply_text(
                 "⚠️ الجودة المطلوبة غير متوفرة لهذا الفيديو، سأحاول تحميل أفضل جودة متاحة بدون تحديد."
@@ -197,7 +223,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     with open(filename, "rb") as f:
                         await query.message.reply_video(f)
                     os.remove(filename)
-                    # حذف رسالة الرابط والرسائل المؤقتة
                     try:
                         await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
                     except Exception:
@@ -214,7 +239,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{fallback_result.stderr}")
                 return
-
         else:
             await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
 
@@ -227,6 +251,7 @@ if __name__ == '__main__':
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
 
     application.run_webhook(
         listen="0.0.0.0",
