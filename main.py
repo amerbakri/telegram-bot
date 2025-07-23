@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-COOKIES_FILE = "cookies.txt"  # اسم ملف الكوكيز لازم يكون موجود في نفس مجلد التشغيل
+COOKIES_FILE = "cookies.txt"  # لازم يكون ملف الكوكيز موجود
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
@@ -23,6 +23,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return  # ما في رسالة نصية، نتجاهل
+
     url = update.message.text.strip()
     keyboard = [
         [
@@ -40,7 +43,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice, url = query.data.split("|", 1)
     await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
 
-    # بناء الأمر مع ملف الكوكيز
+    # أمر yt-dlp مع ملف الكوكيز
     if choice == "audio":
         cmd = [
             "yt-dlp",
