@@ -11,13 +11,15 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+COOKIES_FILE = "cookies.txt"  # اسم ملف الكوكيز لازم يكون موجود في نفس مجلد التشغيل
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥"
+        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥\n\n"
+        "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
     )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,11 +40,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     choice, url = query.data.split("|", 1)
     await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
 
+    # بناء الأمر مع ملف الكوكيز
     if choice == "audio":
-        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-x",
+            "--audio-format", "mp3",
+            "-o", "audio.%(ext)s",
+            url
+        ]
         filename = "audio.mp3"
     else:
-        cmd = ["yt-dlp", "-o", "video.%(ext)s", url]
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-o", "video.%(ext)s",
+            url
+        ]
         filename = None
 
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -72,7 +87,6 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     application.add_handler(CallbackQueryHandler(button_handler))
 
-    # Webhook mode for Render
     application.run_webhook(
         listen="0.0.0.0",
         port=int(os.getenv("PORT", "8443")),
