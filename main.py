@@ -1,6 +1,5 @@
 import os
 import subprocess
-from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -15,12 +14,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "✅ Bot is running!"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -86,5 +79,3 @@ if __name__ == '__main__':
         url_path=BOT_TOKEN,
         webhook_url=f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
     )
-
-    app.run(host='0.0.0.0', port=8080)
