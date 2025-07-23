@@ -20,7 +20,8 @@ COOKIES_FILE = "cookies.txt"
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
-url_store = {}
+url_store = {}  # key: message_id, value: url
+quality_store = {}  # key: message_id, value: quality (e.g. 720)
 
 def is_valid_url(text):
     pattern = re.compile(
@@ -57,7 +58,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{key}"),
-            InlineKeyboardButton("🎥 فيديو (MP4)", callback_data=f"video|{key}|mp4"),
+            InlineKeyboardButton("🎥 فيديو (MP4)", callback_data=f"video_select_quality|{key}|mp4"),
         ],
         [
             InlineKeyboardButton("🎥 فيديو (MKV)", callback_data=f"video|{key}|mkv"),
@@ -85,17 +86,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ العملية ألغيت، يلا بعتلي رابط تاني إذا بدك! 😉")
         return
 
-    if len(data) < 2:
-        await query.message.reply_text("⚠️ خطأ في اختيار التنزيل، حاول مرة تانية.")
-        return
+    if action == "video_select_quality":
+        if len(data) < 3:
+            await query.message.reply_text("⚠️ خطأ في اختيار الجودة.")
+            return
+        key = data[1]
+        ext = data[2]
 
-    key = data[1]
-    url = url_store.get(key)
-    if not url:
-        await query.message.reply_text("⚠️ الرابط مش موجود أو انتهى وقت العملية. أبعت الرابط من جديد.")
+        # خيارات الجودة للفيديو mp4
+        keyboard = [
+            [
+                InlineKeyboardButton("720p", callback_data=f"video|{key}|{ext}|720"),
+                InlineKeyboardButton("480p", callback_data=f"video|{key}|{ext}|480"),
+            ],
+            [
+                InlineKeyboardButton("360p", callback_data=f"video|{key}|{ext}|360"),
+                InlineKeyboardButton("إلغاء", callback_data=f"cancel|{key}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text("📺 اختر جودة الفيديو:", reply_markup=reply_markup)
         return
 
     if action == "audio":
+        if len(data) < 2:
+            await query.message.reply_text("⚠️ خطأ في اختيار التنزيل.")
+            return
+        key = data[1]
+        url = url_store.get(key)
+        if not url:
+            await query.message.reply_text("⚠️ الرابط مش موجود أو انتهى وقت العملية. أبعت الرابط من جديد.")
+            return
+
         await query.edit_message_text("⏳ عم نزل الصوت، خليك معي شوي... 🎧")
         cmd = [
             "yt-dlp",
@@ -111,16 +133,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(data) < 3:
             await query.message.reply_text("⚠️ لازم تختار صيغة الفيديو.")
             return
+        key = data[1]
         ext = data[2]
-        await query.edit_message_text(f"⏳ عم نزل الفيديو بصيغة {ext.upper()}... انتظر شوية 😎")
-        cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
-            "-f", f"bestvideo[ext={ext}]+bestaudio/best[ext={ext}]/best",
-            "-o", f"video.{ext}",
-            url
-        ]
+
+        quality = None
+        if len(data) == 4:
+            quality = data[3]
+
+        url = url_store.get(key)
+        if not url:
+            await query.message.reply_text("⚠️ الرابط مش موجود أو انتهى وقت العملية. أبعت الرابط من جديد.")
+            return
+
+        await query.edit_message_text(f"⏳ عم نزل الفيديو بصيغة {ext.upper()}{' وجودة '+quality+'p' if quality else ''}... انتظر شوية 😎")
+
+        # بناء أمر yt-dlp مع الجودة لو محددة
+        if quality:
+            # نحدد جودة الفيديو عن طريق اختيار فيديو بجودة معينة + أفضل صوت
+            # الصيغة: bestvideo[ext=mp4][height<=720]+bestaudio/best[ext=mp4][height<=720]
+            cmd = [
+                "yt-dlp",
+                "--cookies", COOKIES_FILE,
+                "-f", f"bestvideo[ext={ext}][height<={quality}]+bestaudio[ext=m4a]/best[ext={ext}][height<={quality}]",
+                "-o", f"video.{ext}",
+                url
+            ]
+        else:
+            cmd = [
+                "yt-dlp",
+                "--cookies", COOKIES_FILE,
+                "-f", f"bestvideo[ext={ext}]+bestaudio/best[ext={ext}]",
+                "-o", f"video.{ext}",
+                url
+            ]
         filename = f"video.{ext}"
+
     else:
         await query.message.reply_text("⚠️ خيار غير معروف.")
         return
