@@ -22,7 +22,6 @@ def home():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
 
-# لما المستخدم يرسل الرابط، نرسل له خيارات
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
 
@@ -35,22 +34,21 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("اختر نوع التنزيل:", reply_markup=reply_markup)
 
-# هاندلر الرد على الضغط على الزر
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     data = query.data.split("|")
-    choice = data[0]  # "audio" أو "video"
+    choice = data[0]
     url = data[1]
 
     await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
 
     if choice == "audio":
-        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
+        cmd = ["yt-dlp", "--cookies", "cookies.txt", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
         filename = "audio.mp3"
     else:
-        cmd = ["yt-dlp", "-o", "video.%(ext)s", url]
+        cmd = ["yt-dlp", "--cookies", "cookies.txt", "-o", "video.%(ext)s", url]
         filename = None
 
     result = subprocess.run(cmd, capture_output=True, text=True)
