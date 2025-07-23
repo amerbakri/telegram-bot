@@ -11,7 +11,6 @@ from telegram.ext import (
 )
 import logging
 import re
-import random
 
 logging.basicConfig(level=logging.INFO)
 
@@ -21,6 +20,7 @@ COOKIES_FILE = "cookies.txt"
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
+# قاموس مؤقت لتخزين روابط الفيديو وخيارات الجودة حسب message_id
 url_store = {}
 
 def is_valid_url(text):
@@ -29,39 +29,10 @@ def is_valid_url(text):
     )
     return bool(pattern.match(text))
 
-funny_welcome_msgs = [
-    "هاي! بعث لي رابط فيديو، وأنا جاهز أحمله مثل السنافر لما يشوفوا تفاحة 🍎😄",
-    "أرسل رابط، وخلي الفيديو ينزل أسرع من برق ⚡️!",
-    "هات الرابط بسرعة قبل ما أروح أصنعلي شاي ☕️",
-]
-
-funny_choose_msgs = [
-    "اختار يا بطل: صوت بس ولا فيديو كامل؟ 🎧🎬",
-    "أنا جاهز أنفذ، بس قرر شو بدك! 😎",
-    "يلا، اختار قبل ما أروح أكل بطيخة 🍉",
-]
-
-funny_cancel_msgs = [
-    "أوكي، تم الإلغاء! كنت رح أبدأ أحمل بس بطلنا فكر مرتين 😂",
-    "حلو، لو غيرت رأيك أنا هون دائماً مثل ظلك 😅",
-]
-
-funny_success_msgs = [
-    "ها قد نزلت! شد حالك وصوت عالي 🎉🎶",
-    "تم التحميل بنجاح، خلينا نسمع ونشوف! 👀🎵",
-    "فيديوك وصل، مثل القهوة الصباحية — لازم تستمتع فيه ☕️😄",
-]
-
-funny_error_msgs = [
-    "أوف، حصلت مشكلة! بس ما تقلق، رح حاول تاني 😅",
-    "الغرباء خانوا الرابط 😢، جرب مرة تانية.",
-    "يبدو الفيديو كان مختفي، حاول تبعتلي رابط ثاني.",
-]
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = random.choice(funny_welcome_msgs)
     await update.message.reply_text(
-        f"{msg}\n\nملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
+        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
+        "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
     )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -75,20 +46,23 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     key = str(update.message.message_id)
-    url_store[key] = text
+    url_store[key] = {'url': text, 'quality': None}
 
     keyboard = [
         [
             InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{key}"),
-            InlineKeyboardButton("🎥 فيديو", callback_data=f"video|{key}"),
+        ],
+        [
+            InlineKeyboardButton("🎬 فيديو 720p (HD)", callback_data=f"video720|{key}"),
+            InlineKeyboardButton("🎬 فيديو 480p", callback_data=f"video480|{key}"),
+            InlineKeyboardButton("🎬 فيديو 360p", callback_data=f"video360|{key}"),
         ],
         [
             InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    msg = random.choice(funny_choose_msgs)
-    await update.message.reply_text(msg, reply_markup=reply_markup)
+    await update.message.reply_text("📥 اختر نوع التنزيل أو إلغاء العملية:", reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -101,7 +75,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "cancel":
-        await query.edit_message_text(random.choice(funny_cancel_msgs))
+        # حذف رسالة الخيارات وأيضًا رسالة الرابط
+        await query.edit_message_text("❌ تم إلغاء العملية بنجاح. لا تنسى ترجع تشوف شي مضحك تاني! 😂")
         try:
             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
         except Exception:
@@ -113,13 +88,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ ملف الكوكيز 'cookies.txt' غير موجود. يرجى رفعه.")
         return
 
-    url = url_store.get(key)
-    if not url:
+    info = url_store.get(key)
+    if not info:
         await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
         return
 
-    await query.edit_message_text(f"⏳ جاري تحميل {action}...")
+    url = info['url']
 
+    # تعيين رسالة تحميل فكاهية حسب النوع
+    funny_msgs = {
+        "audio": "🎧 حضر سماعاتك، عم نحمل الصوت بس!",
+        "video720": "📺 جودتك 720p على الطريق!",
+        "video480": "📺 بنزلك فيديو 480p مش بطال!",
+        "video360": "📺 جودتك 360p، تحس بالحنين؟",
+    }
+    await query.edit_message_text(text=funny_msgs.get(action, "⏳ جاري التحميل..."))
+
+    # بناء أمر yt-dlp حسب الجودة المطلوبة
     if action == "audio":
         cmd = [
             "yt-dlp",
@@ -130,11 +115,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url
         ]
         filename = "audio.mp3"
-    else:  # video
+    else:
+        # جودة الفيديو المطلوبة
+        quality_map = {
+            "video720": "bestvideo[height<=720][ext=mp4]+bestaudio/best[height<=720][ext=mp4]",
+            "video480": "bestvideo[height<=480][ext=mp4]+bestaudio/best[height<=480][ext=mp4]",
+            "video360": "bestvideo[height<=360][ext=mp4]+bestaudio/best[height<=360][ext=mp4]",
+        }
+        fmt = quality_map.get(action, "best[ext=mp4]/best")
         cmd = [
             "yt-dlp",
             "--cookies", COOKIES_FILE,
-            "-f", "best[ext=mp4]/best",
+            "-f", fmt,
             "-o", "video.%(ext)s",
             url
         ]
@@ -142,7 +134,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode == 0:
-        if action == "video":
+        if action.startswith("video"):
             for ext in ["mp4", "mkv", "webm"]:
                 if os.path.exists(f"video.{ext}"):
                     filename = f"video.{ext}"
@@ -156,6 +148,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_video(f)
             os.remove(filename)
 
+            # حذف رسالة الرابط بعد الإرسال
             try:
                 await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
             except Exception:
@@ -163,16 +156,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             url_store.pop(key, None)
 
+            # حذف رسالة "جاري التحميل"
             try:
                 await query.delete_message()
             except Exception:
                 pass
-
-            await query.message.reply_text(random.choice(funny_success_msgs))
         else:
             await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
     else:
-        await query.message.reply_text(random.choice(funny_error_msgs) + f"\n\n📄 التفاصيل:\n{result.stderr}")
+        await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8443"))
