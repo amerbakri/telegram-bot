@@ -10,6 +10,7 @@ from telegram.ext import (
     filters,
 )
 import logging
+import re
 
 logging.basicConfig(level=logging.INFO)
 
@@ -18,6 +19,16 @@ COOKIES_FILE = "cookies.txt"
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
+
+# قاموس مؤقت لتخزين روابط الفيديو حسب message_id
+url_store = {}
+
+# دالة بسيطة للتحقق إذا النص رابط يوتيوب، تيك توك أو انستا (ممكن تطورها حسب الحاجة)
+def is_valid_url(text):
+    pattern = re.compile(
+        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/.+"
+    )
+    return bool(pattern.match(text))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -29,11 +40,20 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    url = update.message.text.strip()
+    text = update.message.text.strip()
+
+    if not is_valid_url(text):
+        await update.message.reply_text("⚠️ يرجى إرسال رابط فيديو صالح من يوتيوب، تيك توك أو إنستا فقط.")
+        return
+
+    # خزّن الرابط في القاموس مع مفتاح معرف الرسالة
+    key = str(update.message.message_id)
+    url_store[key] = text
+
     keyboard = [
         [
-            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{url}"),
-            InlineKeyboardButton("🎥 فيديو", callback_data=f"video|{url}"),
+            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{key}"),
+            InlineKeyboardButton("🎥 فيديو", callback_data=f"video|{key}"),
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -47,7 +67,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ ملف الكوكيز 'cookies.txt' غير موجود. يرجى رفعه.")
         return
 
-    choice, url = query.data.split("|", 1)
+    try:
+        choice, key = query.data.split("|", 1)
+    except ValueError:
+        await query.message.reply_text("⚠️ حدث خطأ في اختيار التنزيل.")
+        return
+
+    url = url_store.get(key)
+    if not url:
+        await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
+        return
+
     await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
 
     if choice == "audio":
@@ -60,7 +90,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url
         ]
         filename = "audio.mp3"
-    else:
+    else:  # فيديو
         cmd = [
             "yt-dlp",
             "--cookies", COOKIES_FILE,
@@ -90,7 +120,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT"))
+    port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
