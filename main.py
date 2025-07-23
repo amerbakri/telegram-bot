@@ -90,7 +90,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", "8443"))
+    port = int(os.getenv("PORT"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
