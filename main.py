@@ -7,23 +7,22 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
-    filters,
     ChatMemberHandler,
+    filters,
 )
 import logging
 import re
 import asyncio
+import random
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 COOKIES_FILE = "cookies.txt"
-CHANNEL_USERNAME = "@gsm4x"  # قناة الاشتراك الإجباري
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
-# تخزين مؤقت للرابط حسب message_id
 url_store = {}
 
 def is_valid_url(text):
@@ -33,53 +32,49 @@ def is_valid_url(text):
     return bool(pattern.match(text))
 
 quality_map = {
-    "720": "best[height<=720][ext=mp4]",
-    "480": "best[height<=480][ext=mp4]",
-    "360": "best[height<=360][ext=mp4]",
+    "720": "best[height<=720]",
+    "480": "best[height<=480]",
+    "360": "best[height<=360]",
 }
 
-async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    try:
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        if member.status not in ("left", "kicked"):
-            return True
-    except Exception as e:
-        logging.warning(f"Subscription check failed: {e}")
-    return False
+# الترحيب بالأعضاء الجدد
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if result.new_chat_member.status == "member":
+        user = result.new_chat_member.user
+        chat_id = update.effective_chat.id
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"👋 أهلًا وسهلًا بك يا {user.first_name} 💫\n"
+                 "🛠️ صيانة واستشارات وعروض ولا أحلى!\n"
+                 "📥 أرسل رابط لتحميل الفيديو بأي جودة، أو اسأل أي سؤال عن الصيانة والعروض."
+        )
+
+# الردود التلقائية على تحيات في المجموعه
+async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.chat.type in ['group', 'supergroup']:
+        text = update.message.text.lower()
+        greetings = {
+            "السلام عليكم": ["وعليكم السلام ورحمة الله", "وعليكم السلام", "وعليكم السلام ورحمة الله وبركاته"],
+            "مرحبا": ["أهلاً!", "مرحبا فيك!", "يا هلا!"],
+            "هلا": ["هلا والله!", "هلا وغلا!"],
+            "صباح الخير": ["صباح النور!", "صباح الفل!"],
+            "مساء الخير": ["مساء النور!", "مساء الورد!"],
+        }
+        for key, replies in greetings.items():
+            if key in text:
+                reply = random.choice(replies)
+                await update.message.reply_text(reply)
+                break
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
+        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
         "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
     )
 
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    member: ChatMemberUpdated = update.chat_member
-    if member.new_chat_member.status == "member":
-        user = member.new_chat_member.user
-        await context.bot.send_message(
-            chat_id=update.chat_member.chat.id,
-            text=(
-                f"👋 أهلًا وسهلًا بك يا {user.first_name} 💫\n"
-                "🛠️ صيانة واستشارات وعروض ولا أحلى!\n"
-                "📥 أرسل رابط لتحميل الفيديو بأي جودة أو اسأل أي سؤال عن الصيانة والعروض في خدمات الجوال."
-            ),
-        )
-
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # فقط التعامل مع رسائل تحتوي روابط في المجموعات
-    if update.message.chat.type in ("group", "supergroup"):
-        if not update.message.text or not is_valid_url(update.message.text.strip()):
-            return  # تجاهل الرسائل غير المحتوية على روابط فيديو
-
     if not update.message or not update.message.text:
-        return
-
-    user_id = update.message.from_user.id
-    if not await check_subscription(user_id, context):
-        await update.message.reply_text(
-            f"⚠️ عذراً، يجب عليك الاشتراك في القناة {CHANNEL_USERNAME} لاستخدام هذا البوت."
-        )
         return
 
     text = update.message.text.strip()
@@ -252,6 +247,7 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
 
     application.run_webhook(
         listen="0.0.0.0",
