@@ -20,10 +20,9 @@ COOKIES_FILE = "cookies.txt"
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
-# تخزين روابط الفيديو مؤقتًا (message_id -> url)
+# قاموس مؤقت لتخزين روابط الفيديو حسب message_id
 url_store = {}
 
-# فلاتر الروابط
 def is_valid_url(text):
     pattern = re.compile(
         r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com)/.+"
@@ -49,14 +48,13 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     key = str(update.message.message_id)
     url_store[key] = text
 
-    # نعرض نوع التنزيل أولاً (صوت أو فيديو)
     keyboard = [
         [
-            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"type|audio|{key}"),
-            InlineKeyboardButton("🎥 فيديو", callback_data=f"type|video|{key}"),
+            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|{key}"),
+            InlineKeyboardButton("🎥 فيديو (MP4)", callback_data=f"video|{key}"),
         ],
         [
-            InlineKeyboardButton("❌ إلغاء", callback_data="cancel")
+            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -66,111 +64,66 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "cancel":
+    try:
+        action, key = query.data.split("|", 1)
+    except ValueError:
+        await query.message.reply_text("⚠️ حدث خطأ في اختيار التنزيل.")
+        return
+
+    if action == "cancel":
         await query.edit_message_text("❌ تم إلغاء العملية.")
+        url_store.pop(key, None)
         return
 
-    parts = query.data.split("|")
-    if len(parts) < 3:
-        await query.message.reply_text("⚠️ خطأ في بيانات الزرار.")
+    url = url_store.get(key)
+    if not url:
+        await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
         return
 
-    action = parts[0]
+    loading_msg = await query.edit_message_text(text=f"⏳ جاري تحميل {action}...")
 
-    if action == "type":
-        # نوع التنزيل + نوع الملف + المفتاح
-        choice = parts[1]  # audio or video
-        key = parts[2]
-
-        url = url_store.get(key)
-        if not url:
-            await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
-            return
-
-        # بعد اختيار النوع، نعرض خيارات الجودة
-        keyboard = [
-            [
-                InlineKeyboardButton("عالي (best)", callback_data=f"quality|best|{choice}|{key}"),
-                InlineKeyboardButton("متوسط (medium)", callback_data=f"quality|medium|{choice}|{key}"),
-                InlineKeyboardButton("منخفض (worst)", callback_data=f"quality|worst|{choice}|{key}"),
-            ],
-            [
-                InlineKeyboardButton("❌ إلغاء", callback_data="cancel")
-            ]
+    if action == "audio":
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-x",
+            "--audio-format", "mp3",
+            "-o", "audio.%(ext)s",
+            url
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(text=f"📊 اختر جودة {choice}:", reply_markup=reply_markup)
+        filename = "audio.mp3"
+    else:  # فيديو mp4 فقط
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",
+            "-o", "video.%(ext)s",
+            url
+        ]
+        filename = None
 
-    elif action == "quality":
-        # جودة + نوع + المفتاح
-        quality = parts[1]  # best, medium, worst
-        choice = parts[2]   # audio or video
-        key = parts[3]
-
-        url = url_store.get(key)
-        if not url:
-            await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
-            return
-
-        await query.edit_message_text(text=f"⏳ جاري تحميل {choice} بجودة {quality}...")
-
-        # بناء أمر yt-dlp حسب النوع والجودة
-        if choice == "audio":
-            # صيغة الصوت فقط
-            cmd = [
-                "yt-dlp",
-                "--cookies", COOKIES_FILE,
-                "-x",
-                "--audio-format", "mp3",
-                "-f", f"bestaudio{'/worstaudio' if quality=='worst' else ''}",
-                "-o", "audio.%(ext)s",
-                url
-            ]
-            filename = "audio.mp3"
-        else:
-            # صيغة الفيديو حسب الجودة
-            if quality == "best":
-                fmt = "bestvideo+bestaudio/best"
-            elif quality == "medium":
-                fmt = "bv[height<=480]+ba/best[height<=480]"
-            else:  # worst
-                fmt = "worstvideo+worstaudio/worst"
-
-            cmd = [
-                "yt-dlp",
-                "--cookies", COOKIES_FILE,
-                "-f", fmt,
-                "-o", "video.%(ext)s",
-                url
-            ]
-            filename = None
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
-            return
-
-        if choice == "video":
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        if action == "video":
             for ext in ["mp4", "mkv", "webm"]:
                 if os.path.exists(f"video.{ext}"):
                     filename = f"video.{ext}"
                     break
 
         if filename and os.path.exists(filename):
-            size_mb = os.path.getsize(filename) / (1024 * 1024)
-            if size_mb > 50:
-                await query.message.reply_text(f"🚫 حجم الملف كبير جداً ({int(size_mb)} ميجابايت). لا يمكنني إرساله عبر تيليجرام.")
-                os.remove(filename)
-                return
-
             with open(filename, "rb") as f:
-                if choice == "audio":
+                if action == "audio":
                     await query.message.reply_audio(f)
                 else:
                     await query.message.reply_video(f)
+
             os.remove(filename)
+            await loading_msg.delete()  # حذف رسالة التحميل
+            url_store.pop(key, None)
         else:
-            await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
+            await loading_msg.edit_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
+    else:
+        await loading_msg.edit_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
 
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8443"))
