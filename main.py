@@ -1,5 +1,8 @@
 import os
 import subprocess
+import re
+import uuid
+
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -19,12 +22,27 @@ app = Flask(__name__)
 def home():
     return "Bot is running!"
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
 
-# لما المستخدم يرسل الرابط، نرسل له خيارات
+def is_url(text):
+    return re.match(r'https?://', text) is not None
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 أهلاً بك!\n"
+        "أرسل لي رابط فيديو من **يوتيوب** أو **تيك توك** أو **إنستغرام**، "
+        "وسأقوم بتحميله لك 🎥\n\n"
+        "اختر لاحقاً إذا كنت تريد تحميله كـ 🎵 صوت أو كـ 🎥 فيديو.",
+        parse_mode="Markdown"
+    )
+
+
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
+
+    if not is_url(url):
+        await update.message.reply_text("🚫 من فضلك أرسل رابط فيديو صالح.")
+        return
 
     keyboard = [
         [
@@ -33,45 +51,43 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("اختر نوع التنزيل:", reply_markup=reply_markup)
+    await update.message.reply_text("✅ اختر نوع التنزيل:", reply_markup=reply_markup)
 
-# هاندلر الرد على الضغط على الزر
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     data = query.data.split("|")
-    choice = data[0]  # "audio" أو "video"
+    choice = data[0]  # audio or video
     url = data[1]
 
-    await query.edit_message_text(text=f"⏳ جاري تحميل {choice}...")
+    unique_id = str(uuid.uuid4())[:8]
+    await query.edit_message_text(text=f"⏳ جاري التحميل كـ {'صوت' if choice == 'audio' else 'فيديو'}…")
 
     if choice == "audio":
-        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
-        filename = "audio.mp3"
+        filename = f"audio_{unique_id}.mp3"
+        cmd = ["yt-dlp", "-x", "--audio-format", "mp3", "-o", filename, url]
     else:
-        cmd = ["yt-dlp", "-o", "video.%(ext)s", url]
-        filename = None
+        filename = f"video_{unique_id}.mp4"
+        cmd = ["yt-dlp", "-f", "mp4", "-o", filename, url]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
-        if choice == "video":
-            for ext in ["mp4", "mkv", "webm"]:
-                if os.path.exists(f"video.{ext}"):
-                    filename = f"video.{ext}"
-                    break
 
-        if filename and os.path.exists(filename):
-            with open(filename, "rb") as f:
-                if choice == "audio":
-                    await query.message.reply_audio(f)
-                else:
-                    await query.message.reply_video(f)
-            os.remove(filename)
-        else:
-            await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
+    if result.returncode == 0 and os.path.exists(filename):
+        with open(filename, "rb") as f:
+            if choice == "audio":
+                await query.message.reply_audio(f)
+            else:
+                await query.message.reply_video(f)
+        os.remove(filename)
     else:
-        await query.message.reply_text(f"🚫 فشل التنزيل.\n{result.stderr}")
+        await query.message.reply_text(
+            "🚫 فشل التنزيل. حاول مجددًا أو تحقق من الرابط.\n\n"
+            f"📄 التفاصيل:\n`{result.stderr.strip()}`",
+            parse_mode="Markdown"
+        )
+
 
 if __name__ == '__main__':
     bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
