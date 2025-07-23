@@ -1,28 +1,17 @@
 import os
 import subprocess
+import re
+import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    CallbackQueryHandler,
-    ChatMemberHandler,
-    filters,
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes,
+    CallbackQueryHandler, ChatMemberHandler, filters
 )
-import logging
-import re
-import asyncio
-import random
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 COOKIES_FILE = "cookies.txt"
-
-if not BOT_TOKEN:
-    raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
-
 url_store = {}
 
 def is_valid_url(text):
@@ -37,219 +26,130 @@ quality_map = {
     "360": "best[height<=360]",
 }
 
-# الترحيب بالأعضاء الجدد
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    result = update.chat_member
-    if result.new_chat_member.status == "member":
-        user = result.new_chat_member.user
-        chat_id = update.effective_chat.id
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"👋 أهلًا وسهلًا بك يا {user.first_name} 💫\n"
-                 "🛠️ صيانة واستشارات وعروض ولا أحلى!\n"
-                 "📥 أرسل رابط لتحميل الفيديو بأي جودة، أو اسأل أي سؤال عن الصيانة والعروض."
-        )
-
-# الردود التلقائية على تحيات في المجموعه
-async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type in ['group', 'supergroup']:
-        text = update.message.text.lower()
-        greetings = {
-            "السلام عليكم": ["وعليكم السلام ورحمة الله", "وعليكم السلام", "وعليكم السلام ورحمة الله وبركاته"],
-            "مرحبا": ["أهلاً!", "مرحبا فيك!", "يا هلا!"],
-            "هلا": ["هلا والله!", "هلا وغلا!"],
-            "صباح الخير": ["صباح النور!", "صباح الفل!"],
-            "مساء الخير": ["مساء النور!", "مساء الورد!"],
-        }
-        for key, replies in greetings.items():
-            if key in text:
-                reply = random.choice(replies)
-                await update.message.reply_text(reply)
-                break
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلا! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
-        "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
+        "👋 أهلا! أرسل رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأقوم بتحميله لك 🎬"
     )
+
+async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.lower()
+    replies = {
+        "السلام عليكم": "وعليكم السلام ورحمة الله 🌟",
+        "مرحبا": "أهلًا وسهلًا! 😄",
+        "هلا": "هلا وغلا 💫",
+        "صباح الخير": "صباح الورد ☀️",
+        "مساء الخير": "مساء الفل 🌙"
+    }
+    for keyword, response in replies.items():
+        if keyword in text:
+            await update.message.reply_text(response)
+            return
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
-
     text = update.message.text.strip()
-
     if not is_valid_url(text):
-        await update.message.reply_text("⚠️ يرجى إرسال رابط فيديو صالح من يوتيوب، تيك توك، إنستا أو فيسبوك فقط.")
         return
-
     key = str(update.message.message_id)
     url_store[key] = text
-
     keyboard = [
-        [
-            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}"),
-        ],
+        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
         [
             InlineKeyboardButton("🎥 فيديو 720p", callback_data=f"video|720|{key}"),
             InlineKeyboardButton("🎥 فيديو 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 فيديو 360p", callback_data=f"video|360|{key}"),
+            InlineKeyboardButton("🎥 فيديو 360p", callback_data=f"video|360|{key}")
         ],
-        [
-            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")
-        ]
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📥 اختر نوع التنزيل والجودة أو إلغاء العملية:", reply_markup=reply_markup)
+    await update.message.reply_text("📥 اختر نوع التنزيل والجودة:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     try:
         action, quality_or_key, maybe_key = query.data.split("|")
-        if action == "cancel":
-            key = quality_or_key
-        else:
-            quality = quality_or_key
-            key = maybe_key
+        key = maybe_key if action != "cancel" else quality_or_key
     except ValueError:
-        await query.message.reply_text("⚠️ حدث خطأ في اختيار التنزيل.")
+        await query.message.reply_text("⚠️ خطأ في التنزيل.")
         return
-
     if action == "cancel":
-        await query.edit_message_text("❌ تم إلغاء العملية بنجاح.")
+        await query.edit_message_text("❌ تم الإلغاء.")
         try:
             await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
-        except Exception:
-            pass
+        except: pass
         url_store.pop(key, None)
         return
-
     if not os.path.exists(COOKIES_FILE):
-        await query.message.reply_text("⚠️ ملف الكوكيز 'cookies.txt' غير موجود. يرجى رفعه.")
+        await query.message.reply_text("⚠️ ملف الكوكيز غير موجود.")
         return
-
     url = url_store.get(key)
     if not url:
-        await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
+        await query.message.reply_text("⚠️ الرابط غير صالح.")
         return
-
-    await query.edit_message_text(text=f"⏳ جاري تحميل {action} بجودة {quality_or_key}...")
-
+    await query.edit_message_text("⏳ جاري التحميل...")
     filename = None
-
     if action == "audio":
-        cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
-            "-x",
-            "--audio-format", "mp3",
-            "-o", "audio.%(ext)s",
-            url
-        ]
+        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
         filename = "audio.mp3"
     else:
-        format_code = quality_map.get(quality, "best")
-        cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
-            "-f", f"{format_code}/best",
-            "-o", "video.%(ext)s",
-            url
-        ]
-
+        format_code = quality_map.get(quality_or_key, "best")
+        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", f"{format_code}/best", "-o", "video.%(ext)s", url]
     result = subprocess.run(cmd, capture_output=True, text=True)
-
     if result.returncode == 0:
         if action == "video":
-            for ext in ["mp4", "mkv", "webm", "mpg", "mov"]:
+            for ext in ["mp4", "mkv", "webm"]:
                 if os.path.exists(f"video.{ext}"):
                     filename = f"video.{ext}"
                     break
-
         if filename and os.path.exists(filename):
             with open(filename, "rb") as f:
                 try:
                     if action == "audio":
                         await query.message.reply_audio(f)
-                        funny_msg = "🎧 هاي الموسيقى لك! بس لا ترقص كتير 😄"
+                        funny = "🎧 جاهز للطرب؟ 😄"
                     else:
                         await query.message.reply_video(f)
-                        funny_msg = "📺 الفيديو وصل! جهز نفسك للمشاهدة 🍿"
-                    await query.message.reply_text(funny_msg)
+                        funny = "📺 استمتع بالمشاهدة! 🍿"
+                    await query.message.reply_text(funny)
                 except Exception as e:
-                    await query.message.reply_text(f"⚠️ حدث خطأ أثناء إرسال الملف: {e}")
-
+                    await query.message.reply_text(f"⚠️ خطأ في الإرسال: {e}")
             os.remove(filename)
-
             try:
                 await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
-            except Exception:
-                pass
-
+            except: pass
             url_store.pop(key, None)
-
             try:
                 await query.delete_message()
-            except Exception:
-                pass
+            except: pass
         else:
-            await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
+            await query.message.reply_text("🚫 الملف غير موجود بعد التحميل.")
     else:
-        if "Requested format is not available" in result.stderr:
-            await query.message.reply_text(
-                "⚠️ الجودة المطلوبة غير متوفرة لهذا الفيديو، سأحاول تحميل أفضل جودة متاحة بدون تحديد."
-            )
-            fallback_cmd = [
-                "yt-dlp",
-                "--cookies", COOKIES_FILE,
-                "-f", "best",
-                "-o", "video.%(ext)s",
-                url
-            ]
-            fallback_result = subprocess.run(fallback_cmd, capture_output=True, text=True)
-            if fallback_result.returncode == 0:
-                for ext in ["mp4", "mkv", "webm", "mpg", "mov"]:
-                    if os.path.exists(f"video.{ext}"):
-                        filename = f"video.{ext}"
-                        break
-                if filename and os.path.exists(filename):
-                    with open(filename, "rb") as f:
-                        await query.message.reply_video(f)
-                    os.remove(filename)
-                    try:
-                        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
-                    except Exception:
-                        pass
-                    url_store.pop(key, None)
-                    try:
-                        await query.delete_message()
-                    except Exception:
-                        pass
-                    return
-                else:
-                    await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
-                    return
-            else:
-                await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{fallback_result.stderr}")
-                return
-        else:
-            await query.message.reply_text(f"🚫 فشل التنزيل.\n📄 التفاصيل:\n{result.stderr}")
+        await query.message.reply_text(f"❌ فشل التحميل.\n{result.stderr}")
 
-if __name__ == '__main__':
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_member = update.chat_member
+    if chat_member.new_chat_member.status == "member":
+        user = chat_member.new_chat_member.user
+        name = user.first_name or "صديق جديد"
+        await context.bot.send_message(
+            chat_id=update.chat_member.chat.id,
+            text=f"👋 أهلًا وسهلًا بك يا {name} 💫\n🛠️ صيانة واستشارات وعروض ولا أحلى!\n📥 أرسل رابط لتحميل الفيديو أو اسأل عن أي خدمة."
+        )
+
+if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # ✅ ترتيب الـ handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
-
-    application.run_webhook(
+    app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=BOT_TOKEN,
