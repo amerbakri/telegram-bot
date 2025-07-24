@@ -18,11 +18,12 @@ logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 COOKIES_FILE = "cookies.txt"
-CHANNEL_USERNAME = "@gsm4x"
+CHANNEL_USERNAME = "@gsm4x"  # قناة الاشتراك الإجباري
 
 if not BOT_TOKEN:
     raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
 
+# تخزين مؤقت للرابط حسب message_id
 url_store = {}
 
 def is_valid_url(text):
@@ -65,18 +66,11 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ),
         )
 
-async def group_greetings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.chat.type not in ("group", "supergroup"):
-        return
-    text = update.message.text.lower()
-    greetings = ["السلام عليكم", "مرحبا", "اهلا", "أهلا", "هلا"]
-    if any(greet in text for greet in greetings):
-        await update.message.reply_text("وعليكم السلام ورحمة الله 😊")
-
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # فقط التعامل مع رسائل تحتوي روابط في المجموعات
     if update.message.chat.type in ("group", "supergroup"):
         if not update.message.text or not is_valid_url(update.message.text.strip()):
-            return
+            return  # تجاهل الرسائل غير المحتوية على روابط فيديو
 
     if not update.message or not update.message.text:
         return
@@ -98,13 +92,17 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url_store[key] = text
 
     keyboard = [
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
+        [
+            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}"),
+        ],
         [
             InlineKeyboardButton("🎥 فيديو 720p", callback_data=f"video|720|{key}"),
             InlineKeyboardButton("🎥 فيديو 480p", callback_data=f"video|480|{key}"),
             InlineKeyboardButton("🎥 فيديو 360p", callback_data=f"video|360|{key}"),
         ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
+        [
+            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")
+        ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("📥 اختر نوع التنزيل والجودة أو إلغاء العملية:", reply_markup=reply_markup)
@@ -147,11 +145,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     filename = None
 
     if action == "audio":
-        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-x",
+            "--audio-format", "mp3",
+            "-o", "audio.%(ext)s",
+            url
+        ]
         filename = "audio.mp3"
     else:
         format_code = quality_map.get(quality, "best")
-        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", f"{format_code}/best", "-o", "video.%(ext)s", url]
+        cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-f", f"{format_code}/best",
+            "-o", "video.%(ext)s",
+            url
+        ]
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -174,12 +185,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_text(funny_msg)
                 except Exception as e:
                     await query.message.reply_text(f"⚠️ حدث خطأ أثناء إرسال الملف: {e}")
+
             os.remove(filename)
+
             try:
                 await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
             except Exception:
                 pass
+
             url_store.pop(key, None)
+
             try:
                 await query.delete_message()
             except Exception:
@@ -191,7 +206,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(
                 "⚠️ الجودة المطلوبة غير متوفرة لهذا الفيديو، سأحاول تحميل أفضل جودة متاحة بدون تحديد."
             )
-            fallback_cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", "best", "-o", "video.%(ext)s", url]
+            fallback_cmd = [
+                "yt-dlp",
+                "--cookies", COOKIES_FILE,
+                "-f", "best",
+                "-o", "video.%(ext)s",
+                url
+            ]
             fallback_result = subprocess.run(fallback_cmd, capture_output=True, text=True)
             if fallback_result.returncode == 0:
                 for ext in ["mp4", "mkv", "webm", "mpg", "mov"]:
@@ -228,7 +249,6 @@ if __name__ == '__main__':
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, group_greetings))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
