@@ -42,10 +42,9 @@ quality_map = {
 async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        logging.info(f"User {user_id} status in {CHANNEL_USERNAME}: {member.status}")
         return member.status not in ("left", "kicked")
     except Exception as e:
-        logging.warning(f"فشل التحقق من الاشتراك للمستخدم {user_id}: {e}")
+        logging.warning(f"فشل التحقق من الاشتراك: {e}")
         return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -72,10 +71,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.message.from_user.id
 
-    subscribed = await check_subscription(user_id, context)
-    await update.message.reply_text(f"حالة الاشتراك: {'✅ مشترك' if subscribed else '❌ غير مشترك'}")
-
-    if not subscribed:
+    if not await check_subscription(user_id, context):
         button = InlineKeyboardMarkup([
             [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
         ])
@@ -209,4 +205,4 @@ if __name__ == '__main__':
         port=port,
         url_path=BOT_TOKEN,
         webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-                )
+    )
