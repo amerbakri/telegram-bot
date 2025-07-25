@@ -21,10 +21,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
 CHANNEL_USERNAME = "@gsm4x"  # قناة الاشتراك الإجباري
 
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
+if not BOT_TOKEN:
+    raise RuntimeError("❌ BOT_TOKEN not set in environment variables.")
+if not OPENAI_API_KEY:
+    raise RuntimeError("❌ OPENAI_API_KEY not set in environment variables.")
 
 openai.api_key = OPENAI_API_KEY
+
+# تخزين مؤقت للرابط حسب message_id
 url_store = {}
 
 def is_valid_url(text):
@@ -42,14 +46,16 @@ quality_map = {
 async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status not in ("left", "kicked")
+        if member.status not in ("left", "kicked"):
+            return True
     except Exception as e:
-        logging.warning(f"فشل التحقق من الاشتراك: {e}")
-        return False
+        logging.warning(f"Subscription check failed: {e}")
+    return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥"
+        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب، تيك توك، إنستا أو فيسبوك لأحمله لك 🎥\n\n"
+        "ملاحظة: لتحميل فيديوهات محمية من يوتيوب، تأكد من رفع ملف الكوكيز 'cookies.txt' مع البوت."
     )
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,148 +67,179 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text=(
                 f"👋 أهلًا وسهلًا بك يا {user.first_name} 💫\n"
                 "🛠️ صيانة واستشارات وعروض ولا أحلى!\n"
-                "📥 أرسل رابط لتحميل الفيديو أو اسأل أي سؤال عن الصيانة."
+                "📥 أرسل رابط لتحميل الفيديو بأي جودة أو اسأل أي سؤال عن الصيانة والعروض في خدمات الجوال."
             ),
         )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # فقط التعامل مع رسائل تحتوي روابط في المجموعات
+    if update.message.chat.type in ("group", "supergroup"):
+        if not update.message.text or not is_valid_url(update.message.text.strip()):
+            return  # تجاهل الرسائل غير المحتوية على روابط فيديو
+
     if not update.message or not update.message.text:
         return
 
     user_id = update.message.from_user.id
-
     if not await check_subscription(user_id, context):
-        button = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
-        ])
         await update.message.reply_text(
-            "⚠️ يجب الاشتراك في القناة لاستخدام البوت:", reply_markup=button
+            f"⚠️ عذراً، يجب عليك الاشتراك في القناة {CHANNEL_USERNAME} لاستخدام هذا البوت."
         )
         return
 
     text = update.message.text.strip()
 
-    # رد ذكي باستخدام OpenAI في حال ما كان رابط
     if not is_valid_url(text):
-        if re.search(r"(السلام|مرحبا|أهلا|هلا|الو)", text, re.IGNORECASE):
-            await update.message.reply_text("👋 وعليكم السلام ورحمة الله! كيف أقدر أساعدك؟")
-            return
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": text}]
-            )
-            reply = response['choices'][0]['message']['content']
-            await update.message.reply_text(reply)
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ في الرد الذكي: {e}")
+        await update.message.reply_text("⚠️ يرجى إرسال رابط فيديو صالح من يوتيوب، تيك توك، إنستا أو فيسبوك فقط.")
+        return
+
+    # التعامل مع أوامر الذكاء الاصطناعي
+    if text.lower().startswith("!اسأل") or text.lower().startswith("!سؤال"):
+        question = text.split(" ", 1)[1] if " " in text else ""
+        if question:
+            response = await ask_openai(question)
+            await update.message.reply_text(response)
+        else:
+            await update.message.reply_text("⚠️ يرجى كتابة السؤال بعد الأمر !اسأل")
         return
 
     key = str(update.message.message_id)
     url_store[key] = text
 
     keyboard = [
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
         [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
+            InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}"),
         ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
+        [
+            InlineKeyboardButton("🎥 فيديو 720p", callback_data=f"video|720|{key}"),
+            InlineKeyboardButton("🎥 فيديو 480p", callback_data=f"video|480|{key}"),
+            InlineKeyboardButton("🎥 فيديو 360p", callback_data=f"video|360|{key}"),
+        ],
+        [
+            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")
+        ]
     ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("📥 اختر نوع التنزيل والجودة أو إلغاء العملية:", reply_markup=reply_markup)
 
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+async def ask_openai(question: str) -> str:
+    try:
+        response = openai.Completion.create(
+            engine="text-davinci-003",
+            prompt=question,
+            max_tokens=150,
+            temperature=0.7,
+        )
+        return response.choices[0].text.strip()
+    except Exception as e:
+        return f"⚠️ خطأ في معالجة السؤال: {e}"
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     try:
-        action, quality, key = query.data.split("|")
+        action, quality_or_key, maybe_key = query.data.split("|")
+        if action == "cancel":
+            key = quality_or_key
+        else:
+            quality = quality_or_key
+            key = maybe_key
     except ValueError:
-        await query.message.reply_text("⚠️ خطأ في المعالجة.")
+        await query.message.reply_text("⚠️ حدث خطأ في اختيار التنزيل.")
         return
 
     if action == "cancel":
-        await query.edit_message_text("❌ تم إلغاء العملية.")
+        await query.edit_message_text("❌ تم إلغاء العملية بنجاح.")
+        try:
+            await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
+        except Exception:
+            pass
         url_store.pop(key, None)
+        return
+
+    if not os.path.exists(COOKIES_FILE):
+        await query.message.reply_text("⚠️ ملف الكوكيز 'cookies.txt' غير موجود. يرجى رفعه.")
         return
 
     url = url_store.get(key)
     if not url:
-        await query.message.reply_text("⚠️ الرابط غير صالح أو انتهت صلاحيته.")
+        await query.message.reply_text("⚠️ الرابط غير موجود أو انتهت صلاحية العملية. أرسل الرابط مرة أخرى.")
         return
 
-    await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
+    await query.edit_message_text(text=f"⏳ جاري تحميل {action} بجودة {quality_or_key}...")
+
+    filename = None
 
     if action == "audio":
         cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-x", "--audio-format", "mp3",
-            "-o", "audio.%(ext)s", url
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-x",
+            "--audio-format", "mp3",
+            "-o", "audio.%(ext)s",
+            url
         ]
         filename = "audio.mp3"
     else:
         format_code = quality_map.get(quality, "best")
         cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", format_code,
-            "-o", "video.%(ext)s", url
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-f", f"{format_code}/best",
+            "-o", "video.%(ext)s",
+            url
         ]
-        filename = None
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
-    # في حال فشل التنزيل بالجودة المطلوبة، جرّب أفضل جودة متاحة
-    if result.returncode != 0:
-        fallback_cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", "best[ext=mp4]",
-            "-o", "video.%(ext)s", url
-        ]
-        fallback = subprocess.run(fallback_cmd, capture_output=True, text=True)
-        if fallback.returncode != 0:
-            await query.message.reply_text("🚫 فشل في تحميل الفيديو. جرب رابطًا آخر.")
-            return
+    if result.returncode == 0:
+        if action == "video":
+            for ext in ["mp4", "mkv", "webm", "mpg", "mov"]:
+                if os.path.exists(f"video.{ext}"):
+                    filename = f"video.{ext}"
+                    break
 
-    if action == "video":
-        for ext in ["mp4", "mkv", "webm"]:
-            f = f"video.{ext}"
-            if os.path.exists(f):
-                filename = f
-                break
+        if filename and os.path.exists(filename):
+            with open(filename, "rb") as f:
+                try:
+                    if action == "audio":
+                        await query.message.reply_audio(f)
+                        funny_msg = "🎧 هاي الموسيقى لك! بس لا ترقص كتير 😄"
+                    else:
+                        await query.message.reply_video(f)
+                        funny_msg = "📺 الفيديو وصل! جهز نفسك للمشاهدة 🍿"
+                    await query.message.reply_text(funny_msg)
+                except Exception as e:
+                    await query.message.reply_text(f"⚠️ حدث خطأ أثناء إرسال الملف: {e}")
 
-    if filename and os.path.exists(filename):
-        with open(filename, "rb") as f:
-            if action == "audio":
-                await query.message.reply_audio(f)
-            else:
-                await query.message.reply_video(f)
-        os.remove(filename)
+            os.remove(filename)
+
+            try:
+                await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
+            except Exception:
+                pass
+
+            url_store.pop(key, None)
+
+            try:
+                await query.delete_message()
+            except Exception:
+                pass
+        else:
+            await query.message.reply_text("🚫 لم أتمكن من إيجاد الملف بعد التنزيل.")
     else:
-        await query.message.reply_text("🚫 الملف غير موجود.")
-
-    url_store.pop(key, None)
-
-    # حذف رسالة المستخدم الأصلية (الرابط)
-    try:
-        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
-    except:
-        pass
-
-if __name__ == '__main__':
-    port = int(os.getenv("PORT", "8443"))
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
-
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+        if "Requested format is not available" in result.stderr:
+            await query.message.reply_text(
+                "⚠️ الجودة المطلوبة غير متوفرة لهذا الفيديو، سأحاول تحميل أفضل جودة متاحة بدون تحديد."
+            )
+            fallback_cmd = [
+                "yt-dlp",
+                "--cookies", COOKIES_FILE,
+                "-f", "best",
+                "-o", "video.%(ext)s",
+                url
+            ]
+            fallback_result = subprocess.run(fallback_cmd, capture_output=True, text=True)
+            if fallback_result.returncode == 0:
+                for ext in ["mp4", "mkv",
