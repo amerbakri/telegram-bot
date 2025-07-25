@@ -19,13 +19,12 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
-GROUP_USERNAME = "@gsm4x"  # اسم المجموعة العامة
+CHANNEL_USERNAME = "@gsm4x"  # قناة الاشتراك الإجباري
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
     raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
 
 openai.api_key = OPENAI_API_KEY
-
 url_store = {}
 
 def is_valid_url(text):
@@ -42,7 +41,7 @@ quality_map = {
 
 async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
     try:
-        member = await context.bot.get_chat_member(GROUP_USERNAME, user_id)
+        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status not in ("left", "kicked")
     except Exception as e:
         logging.warning(f"فشل التحقق من الاشتراك: {e}")
@@ -71,19 +70,19 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = update.message.from_user.id
+
     if not await check_subscription(user_id, context):
-        keyboard = [
-            [InlineKeyboardButton("✅ اشترك الآن", url=f"https://t.me/{GROUP_USERNAME.strip('@')}")]
-        ]
+        button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
         await update.message.reply_text(
-            "⚠️ للاستخدام يجب الاشتراك في المجموعة أولاً.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "⚠️ يجب الاشتراك في القناة لاستخدام البوت:", reply_markup=button
         )
         return
 
     text = update.message.text.strip()
 
-    # رد ذكي باستخدام OpenAI
+    # رد ذكي باستخدام OpenAI في حال ما كان رابط
     if not is_valid_url(text):
         if re.search(r"(السلام|مرحبا|أهلا|هلا|الو)", text, re.IGNORECASE):
             await update.message.reply_text("👋 وعليكم السلام ورحمة الله! كيف أقدر أساعدك؟")
@@ -154,9 +153,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
+    # في حال فشل التنزيل بالجودة المطلوبة، جرّب أفضل جودة متاحة
     if result.returncode != 0:
-        await query.message.reply_text("🚫 فشل التنزيل.")
-        return
+        fallback_cmd = [
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", "best[ext=mp4]",
+            "-o", "video.%(ext)s", url
+        ]
+        fallback = subprocess.run(fallback_cmd, capture_output=True, text=True)
+        if fallback.returncode != 0:
+            await query.message.reply_text("🚫 فشل في تحميل الفيديو. جرب رابطًا آخر.")
+            return
 
     if action == "video":
         for ext in ["mp4", "mkv", "webm"]:
@@ -177,6 +184,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url_store.pop(key, None)
 
+    # حذف رسالة المستخدم الأصلية (الرابط)
+    try:
+        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
+    except:
+        pass
+
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
@@ -192,4 +205,4 @@ if __name__ == '__main__':
         port=port,
         url_path=BOT_TOKEN,
         webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-        )
+    )
