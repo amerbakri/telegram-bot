@@ -25,7 +25,6 @@ if not BOT_TOKEN or not OPENAI_API_KEY:
     raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
 
 openai.api_key = OPENAI_API_KEY
-
 url_store = {}
 
 def is_valid_url(text):
@@ -73,8 +72,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
     if not await check_subscription(user_id, context):
+        button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
         await update.message.reply_text(
-            f"⚠️ يجب الاشتراك في القناة {CHANNEL_USERNAME} أولاً لاستخدام البوت."
+            "⚠️ يجب الاشتراك في القناة لاستخدام البوت:", reply_markup=button
         )
         return
 
@@ -151,9 +153,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
+    # في حال فشل التنزيل بالجودة المطلوبة، جرّب أفضل جودة متاحة
     if result.returncode != 0:
-        await query.message.reply_text("🚫 فشل التنزيل.")
-        return
+        fallback_cmd = [
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", "best[ext=mp4]",
+            "-o", "video.%(ext)s", url
+        ]
+        fallback = subprocess.run(fallback_cmd, capture_output=True, text=True)
+        if fallback.returncode != 0:
+            await query.message.reply_text("🚫 فشل في تحميل الفيديو. جرب رابطًا آخر.")
+            return
 
     if action == "video":
         for ext in ["mp4", "mkv", "webm"]:
@@ -174,6 +184,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url_store.pop(key, None)
 
+    # حذف رسالة المستخدم الأصلية (الرابط)
+    try:
+        await context.bot.delete_message(chat_id=query.message.chat_id, message_id=int(key))
+    except:
+        pass
+
 if __name__ == '__main__':
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
@@ -189,4 +205,4 @@ if __name__ == '__main__':
         port=port,
         url_path=BOT_TOKEN,
         webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+        )
