@@ -1,15 +1,8 @@
 import os
 import logging
+import json
 import openai
-import subprocess
-import re
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputMediaPhoto,
-    InputMediaVideo,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, InputMediaVideo
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -18,183 +11,112 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
-from dotenv import load_dotenv
 
-load_dotenv()
-
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO)
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-COOKIES_FILE = "cookies.txt"
-
+# مفاتيح البيئة
+TOKEN = os.environ.get("BOT_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
-url_store = {}
 
-def is_valid_url(text):
-    pattern = re.compile(
-        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
-    )
-    return bool(pattern.match(text))
+# ملف المستخدمين
+USERS_FILE = "users.json"
 
-quality_map = {
-    "720": "best[height<=720][ext=mp4]",
-    "480": "best[height<=480][ext=mp4]",
-    "360": "best[height<=360][ext=mp4]",
-}
+# تحميل المستخدمين
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
 
+# حفظ المستخدمين
+def save_user(user_id):
+    users = load_users()
+    if user_id not in users:
+        users.append(user_id)
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f)
+
+# الرد على /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+    user_id = update.effective_user.id
+    save_user(user_id)
     await update.message.reply_text(
-        f"👋 أهلاً بك!🆔 رقم الـ User ID تبعك هو: {user.id}\n🎥 أرسل رابط فيديو لتحميله أو اسأل سؤال عام."
+        f"👋 أهلاً بك!\n🆔 رقم الـ User ID تبعك هو: {user_id}\n🎥 أرسل رابط فيديو لتحميله أو اسأل سؤال عام."
     )
 
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
+# استقبال الرسائل
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    save_user(user_id)
+    text = update.message.text
 
-    user_text = update.message.text.strip()
-
-    if not is_valid_url(user_text):
+    if "http" in text:
+        await update.message.reply_text("📥 جاري تحميل الفيديو (تجريبي)...")
+        # هنا تقدر تضيف كود التحميل الحقيقي
+        await update.message.reply_text("✅ تم (محاكاة تحميل)")
+    else:
+        await update.message.reply_text("💬 جاري التفكير...")
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": user_text}]
+                messages=[{"role": "user", "content": text}],
             )
-            reply = response['choices'][0]['message']['content']
+            reply = response["choices"][0]["message"]["content"]
             await update.message.reply_text(reply)
         except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ: {e}")
+            await update.message.reply_text("❌ حدث خطأ أثناء الاتصال بـ OpenAI.")
+
+# أمر إرسال إعلان
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != int(os.environ.get("ADMIN_ID", "0")):
+        await update.message.reply_text("❌ هذا الأمر مخصص للمسؤول فقط.")
         return
+    context.user_data["broadcast"] = True
+    await update.message.reply_text("📝 أرسل الرسالة التي تريد بثها (نص/صورة/فيديو):")
 
-    key = str(update.message.message_id)
-    url_store[key] = user_text
-
-    keyboard = [
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
-    ]
-
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    try:
-        action, quality, key = query.data.split("|")
-    except ValueError:
-        await query.message.reply_text("⚠️ خطأ في المعالجة.")
+# استلام الإعلان من الأدمن
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("broadcast"):
         return
+    context.user_data["broadcast"] = False
+    users = load_users()
+    media = update.message
 
-    if action == "cancel":
-        await query.edit_message_text("❌ تم إلغاء العملية.")
-        url_store.pop(key, None)
-        return
-
-    url = url_store.get(key)
-    if not url:
-        await query.message.reply_text("⚠️ الرابط غير صالح.")
-        return
-
-    await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
-
-    if action == "audio":
-        cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-x", "--audio-format", "mp3",
-            "-o", "audio.%(ext)s", url
-        ]
-        filename = "audio.mp3"
-    else:
-        format_code = quality_map.get(quality, "best")
-        cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", format_code,
-            "-o", "video.%(ext)s", url
-        ]
-        filename = None
-
-    result = subprocess.run(cmd, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        fallback_cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", "best[ext=mp4]",
-            "-o", "video.%(ext)s", url
-        ]
-        fallback = subprocess.run(fallback_cmd, capture_output=True, text=True)
-        if fallback.returncode != 0:
-            await query.message.reply_text("🚫 فشل في تحميل الفيديو.")
-            return
-
-    if action == "video":
-        for ext in ["mp4", "mkv", "webm"]:
-            f = f"video.{ext}"
-            if os.path.exists(f):
-                filename = f
-                break
-
-    if filename and os.path.exists(filename):
-        with open(filename, "rb") as f:
-            if action == "audio":
-                await query.message.reply_audio(f)
-            else:
-                await query.message.reply_video(f)
-        os.remove(filename)
-    else:
-        await query.message.reply_text("🚫 الملف غير موجود.")
-
-    url_store.pop(key, None)
-
-async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.photo:
-        await update.message.reply_text("📸 صورة جميلة!")
-    elif update.message.video:
-        await update.message.reply_text("🎞️ شكرًا على الفيديو!")
-
-async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != os.getenv("OWNER_ID"):
-        await update.message.reply_text("🚫 الأمر مخصص فقط للمسؤول.")
-        return
-
-    text = update.message.text.split(" ", 1)
-    if len(text) < 2:
-        await update.message.reply_text("📝 استخدم الأمر هكذا:\n/announce رسالتك هنا")
-        return
-
-    msg = text[1]
-    for user_id in context.application.chat_data.keys():
+    for uid in users:
         try:
-            await context.bot.send_message(chat_id=user_id, text=msg)
+            if media.text:
+                await context.bot.send_message(chat_id=uid, text=media.text)
+            elif media.photo:
+                await context.bot.send_photo(chat_id=uid, photo=media.photo[-1].file_id, caption=media.caption)
+            elif media.video:
+                await context.bot.send_video(chat_id=uid, video=media.video.file_id, caption=media.caption)
         except:
             continue
-    await update.message.reply_text("📢 تم إرسال الإعلان.")
+    await update.message.reply_text("✅ تم إرسال الإعلان.")
+
+# إعداد التطبيق
+app = ApplicationBuilder().token(TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("broadcast", broadcast))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(int(os.environ.get("ADMIN_ID", "0"))), handle_broadcast))
+app.add_handler(MessageHandler(filters.TEXT | filters.VIDEO | filters.PHOTO, handle_message))
+
+# إعداد Webhook لتشغيل على Render
+import asyncio
+
+async def main():
+    await app.initialize()
+    await app.bot.set_webhook("https://telegram-bot-fyro.onrender.com/webhook")
+    await app.start()
+    await app.updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", "10000")),
+        webhook_path="/webhook",
+    )
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    import asyncio
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("announce", announce))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, media_handler))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    async def main():
-        await app.initialize()
-        await app.start()
-        await app.bot.set_webhook("https://telegram-bot-fyro.onrender.com/webhook")
-        await app.updater.start_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", "10000")),
-            webhook_path="/webhook",
-        )
-
     asyncio.run(main())
