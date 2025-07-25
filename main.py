@@ -236,4 +236,4 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(button_handler))
 
-    app.run
+    app.run_polling()
