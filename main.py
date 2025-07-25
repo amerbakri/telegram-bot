@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import openai
+import yt_dlp
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -48,10 +49,29 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_user(user_id)
     text = update.message.text
 
-    if text and "http" in text:
-        await update.message.reply_text("📥 جاري تحميل الفيديو (محاكاة)...")
-        # هنا يمكنك إضافة كود تحميل الفيديو الفعلي حسب حاجتك
-        await update.message.reply_text("✅ تم (محاكاة تحميل الفيديو).")
+    if text and ("http://" in text or "https://" in text):
+        await update.message.reply_text("📥 جاري تحميل الفيديو، انتظر لحظة...")
+
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': 'video.%(ext)s',
+            'noplaylist': True,
+            'quiet': True,
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(text, download=True)
+                video_path = ydl.prepare_filename(info)
+
+            with open(video_path, "rb") as video_file:
+                await update.message.reply_video(video_file)
+            os.remove(video_path)
+
+        except Exception as e:
+            logging.error(f"Download error: {e}")
+            await update.message.reply_text(f"❌ فشل تحميل الفيديو: {e}")
+
     else:
         await update.message.reply_text("💬 جاري التفكير...")
         try:
