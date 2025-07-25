@@ -111,4 +111,3 @@ app.run_webhook(
     url_path=BOT_TOKEN,
     webhook_url=f"https://{RENDER_HOST}/{BOT_TOKEN}"
 )
-
