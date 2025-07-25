@@ -226,4 +226,16 @@ if __name__ == '__main__':
     application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO, handle_broadcast))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    application.run_polling()
+    import asyncio
+
+async def main():
+    await application.initialize()
+    await application.start()
+    await application.bot.set_webhook("https://your-render-url.onrender.com/webhook")
+    await application.updater.start_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        webhook_path="/webhook",
+    )
+
+asyncio.run(main())
