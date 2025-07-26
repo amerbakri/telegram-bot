@@ -3,26 +3,27 @@ import json
 import logging
 import openai
 import yt_dlp
+from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, filters
 )
-from dotenv import load_dotenv
 
-# تحميل المتغيرات من .env
+# تحميل متغيرات البيئة
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
-PORT = int(os.getenv("PORT", 8080))
 
+# إعداد OpenAI
 openai.api_key = OPENAI_API_KEY
-USERS_FILE = "users.json"
 
+# اللوج
 logging.basicConfig(level=logging.INFO)
 
-# إدارة المستخدمين
+USERS_FILE = "users.json"
+
 def load_users():
     if not os.path.exists(USERS_FILE):
         return []
@@ -36,16 +37,15 @@ def save_user(user_id: int):
         with open(USERS_FILE, "w") as f:
             json.dump(users, f)
 
-# أمر /start
+# أوامر البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     save_user(user_id)
     await update.message.reply_text(
         f"👋 أهلاً بك!\n🆔 User ID: {user_id}\n"
-        "🎥 أرسل رابط فيديو لتحميله أو اسأل سؤال."
+        "🎥 أرسل رابط فيديو لتحميله أو اسألني سؤال."
     )
 
-# التعامل مع الرسائل
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     save_user(user_id)
@@ -54,7 +54,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    if "http" in text:
+    if "http://" in text or "https://" in text:
         await update.message.reply_text("📥 جاري تحميل الفيديو...")
         try:
             ydl_opts = {
@@ -72,9 +72,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             os.remove(video_path)
         except Exception as e:
             logging.error(f"❌ خطأ تحميل الفيديو: {e}")
-            await update.message.reply_text("❌ حدث خطأ أثناء تحميل الفيديو.")
+            await update.message.reply_text("❌ فشل تحميل الفيديو. تأكد من الرابط.")
     else:
-        await update.message.reply_text("🤖 أفكر...")
+        await update.message.reply_text("🤔 جاري التفكير...")
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -84,15 +84,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply)
         except Exception as e:
             logging.error(f"❌ خطأ OpenAI: {e}")
-            await update.message.reply_text("⚠️ حدث خطأ من OpenAI.")
+            await update.message.reply_text("⚠️ حدث خطأ بالذكاء الاصطناعي.")
 
-# أمر للنشر
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("🚫 هذا الأمر للمسؤول فقط.")
+        await update.message.reply_text("🚫 هذا الأمر مخصص للمسؤول فقط.")
         return
     context.user_data["broadcast_mode"] = True
-    await update.message.reply_text("📣 أرسل الرسالة لإرسالها للجميع.")
+    await update.message.reply_text("📣 أرسل الآن الرسالة/الصورة/الفيديو للإرسال للجميع.")
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("broadcast_mode"):
@@ -109,8 +108,8 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif msg.video:
                 await context.bot.send_video(chat_id=uid, video=msg.video.file_id, caption=msg.caption)
         except Exception as e:
-            logging.warning(f"⚠️ فشل الإرسال إلى {uid}: {e}")
-    await update.message.reply_text("✅ تم إرسال الرسالة.")
+            logging.warning(f"⚠️ لم يتم الإرسال إلى {uid}: {e}")
+    await update.message.reply_text("✅ تم إرسال الرسالة بنجاح.")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -118,8 +117,9 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_ID), handle_broadcast))
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    app.add_handler(MessageHandler(filters.ALL, handle_message))
 
+    # استخدم polling مؤقتًا حتى لا تحتاج Webhook على Render
     app.run_polling()
 
 if __name__ == "__main__":
