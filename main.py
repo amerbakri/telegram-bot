@@ -1,19 +1,22 @@
 import os
-from flask import Flask
+import subprocess
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
-import subprocess
 
+# إعداد المتغيرات
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")  # مثل: https://your-app-name.onrender.com
 
-app = Flask(__name__)
+# إعداد Flask
+flask_app = Flask(__name__)
 
-@app.route('/')
-def home():
-    return "Bot is running!"
+# إعداد بوت تليجرام
+telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# أوامر البوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
+    await update.message.reply_text("👋 أهلا! أرسل رابط فيديو وسأقوم بتحميله لك 🎥")
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
@@ -27,20 +30,37 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if result.returncode == 0:
             for ext in ["mp4", "mkv", "webm"]:
-                if os.path.exists(f"video.{ext}"):
-                    await update.message.reply_video(open(f"video.{ext}", "rb"))
-                    os.remove(f"video.{ext}")
+                filename = f"video.{ext}"
+                if os.path.exists(filename):
+                    await update.message.reply_video(open(filename, "rb"))
+                    os.remove(filename)
                     break
         else:
-            await update.message.reply_text(f"🚫 لم أتمكن من تحميل الفيديو.\n📄 التفاصيل: {result.stderr}")
+            await update.message.reply_text(f"🚫 لم أتمكن من التحميل.\n📄 التفاصيل:\n{result.stderr}")
     except Exception as e:
-        await update.message.reply_text(f"🚫 حصل خطأ: {e}")
+        await update.message.reply_text(f"🚫 حصل خطأ:\n{e}")
 
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+
+# نقطة الدخول للويبهوك (Telegram يستدعيها)
+@flask_app.post(f"/{BOT_TOKEN}")
+async def webhook_handler():
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    await telegram_app.process_update(update)
+    return "ok"
+
+# نقطة اختبار (غير ضرورية للبوت، فقط للمتصفح)
+@flask_app.route("/")
+def home():
+    return "البوت شغال ✅"
+
+# تهيئة الويبهوك وتشغيل السيرفر
 if __name__ == '__main__':
-    bot_app = ApplicationBuilder().token(BOT_TOKEN).build()
+    import asyncio
 
-    bot_app.add_handler(CommandHandler("start", start))
-    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+    async def set_webhook():
+        await telegram_app.bot.set_webhook(f"{APP_URL}/{BOT_TOKEN}")
 
-    bot_app.run_polling()
-    app.run(host='0.0.0.0', port=8080)
+    asyncio.run(set_webhook())
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
