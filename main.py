@@ -1,38 +1,82 @@
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
+)
+import subprocess
 
+# احصل على التوكن واسم الهوست من المتغيرات البيئية
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APP_URL = os.getenv("APP_URL")  # ضيف هذا المتغير في بيئة Render: APP_URL=https://telegram-bot-fyro.onrender.com
+HOSTNAME = os.getenv("HOSTNAME")  # مثل: telegram-bot-fyro.onrender.com
+PORT = int(os.environ.get('PORT', 8080))  # Render يستخدم PORT ديناميكيًا
 
-app = Flask(__name__)
+# تأكد من وجود التوكن والهوست
+if not BOT_TOKEN or not HOSTNAME:
+    raise RuntimeError("يجب تحديد BOT_TOKEN و HOSTNAME كمتغيرات بيئية")
 
-# Telegram bot setup
-telegram_app = ApplicationBuilder().token(BOT_TOKEN).build()
+# إعداد Flask
+flask_app = Flask(__name__)
 
+# تعريف الدوال الخاصة بالبوت
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 أهلاً! أرسل الرابط وسأقوم بتحميله لك.")
+    await update.message.reply_text("👋 أهلا! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا لأحمله لك 🎥")
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ جاري التحميل...")
+    url = update.message.text.strip()
+    await update.message.reply_text("⏳ جاري تحميل الفيديو...")
 
-telegram_app.add_handler(CommandHandler("start", start))
-telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+    try:
+        result = subprocess.run(
+            ["yt-dlp", "-o", "video.%(ext)s", url],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            for ext in ["mp4", "mkv", "webm"]:
+                if os.path.exists(f"video.{ext}"):
+                    await update.message.reply_video(open(f"video.{ext}", "rb"))
+                    os.remove(f"video.{ext}")
+                    break
+        else:
+            await update.message.reply_text(f"🚫 لم أتمكن من تحميل الفيديو.\n📄 التفاصيل: {result.stderr}")
+    except Exception as e:
+        await update.message.reply_text(f"🚫 حصل خطأ: {e}")
 
-# Webhook endpoint
-@app.post(f"/{BOT_TOKEN}")
+# دالة تشغيل التطبيق
+async def run_bot():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # إضافة الهاندلرز
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+
+    # تعيين Webhook
+    webhook_url = f"https://{HOSTNAME}/{BOT_TOKEN}"
+    await app.bot.set_webhook(webhook_url)
+
+    # تشغيل البوت باستخدام Flask
+    return app
+
+# نقطة النهاية لتلقي التحديثات من Telegram
+@flask_app.post(f"/{BOT_TOKEN}")
 async def webhook_handler():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return "ok"
+    update = Update.de_json(request.get_json(force=True), bot_app.bot)
+    await bot_app.process_update(update)
+    return "OK", 200
 
-# إعداد الويب هوك
-@app.before_first_request
-async def set_webhook():
-    webhook_url = f"{APP_URL}/{BOT_TOKEN}"
-    await telegram_app.bot.set_webhook(url=webhook_url)
+# نقطة اختبار
+@flask_app.route('/')
+def home():
+    return "✅ البوت يعمل باستخدام Webhook!"
 
-if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=8080)
+# تشغيل الخادم
+if __name__ == "__main__":
+    import nest_asyncio
+    nest_asyncio.apply()
+
+    # تشغيل البوت مع Flask
+    bot_app = asyncio.run(run_bot())
+    flask_app.run(host="0.0.0.0", port=PORT)
