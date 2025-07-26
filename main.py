@@ -3,23 +3,23 @@ import json
 import logging
 import openai
 import yt_dlp
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 )
 
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO)
 
+# تحميل المتغيرات
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 PORT = int(os.getenv("PORT", "10000"))
 
+# OpenAI API
 openai.api_key = OPENAI_API_KEY
+
 USERS_FILE = "users.json"
 
 def load_users():
@@ -39,8 +39,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     save_user(user_id)
     await update.message.reply_text(
-        f"👋 أهلاً بك!\n🆔 رقم الـ User ID تبعك هو: {user_id}\n"
-        "🎥 أرسل رابط فيديو لتحميله أو اسألني أي سؤال."
+        f"👋 أهلاً بك!\n🆔 User ID: {user_id}\n"
+        "🎥 أرسل رابط فيديو لتحميله أو اسألني سؤالاً."
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -49,13 +49,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
     if not text:
-        await update.message.reply_text("📩 الرجاء إرسال نص أو رابط.")
         return
 
-    logging.info(f"📩 من {user_id}: {text}")
-
     if "http://" in text or "https://" in text:
-        await update.message.reply_text("📥 جاري تحميل الفيديو...")
+        status_msg = await update.message.reply_text("📥 جاري تحميل الفيديو...")
+
         try:
             ydl_opts = {
                 'format': 'best[ext=mp4]/best',
@@ -68,13 +66,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 video_path = ydl.prepare_filename(info)
 
             with open(video_path, "rb") as video_file:
-                await update.message.reply_video(video_file)
+                await update.message.reply_video(video=InputFile(video_file))
+
             os.remove(video_path)
         except Exception as e:
-            logging.error(f"❌ خطأ أثناء تحميل الفيديو: {e}")
-            await update.message.reply_text("❌ فشل تحميل الفيديو. تأكد من صحة الرابط.")
+            logging.error(f"Download error: {e}")
+            await update.message.reply_text("❌ لم يتم تحميل الفيديو. تأكد من الرابط.")
+
+        await status_msg.delete()
     else:
-        await update.message.reply_text("💬 جاري التفكير...")
+        thinking_msg = await update.message.reply_text("🤔 جاري التفكير...")
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -83,15 +84,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply = response["choices"][0]["message"]["content"]
             await update.message.reply_text(reply)
         except Exception as e:
-            logging.error(f"❌ خطأ OpenAI: {e}")
-            await update.message.reply_text("⚠️ حدث خطأ أثناء الاتصال بـ OpenAI.")
+            logging.error(f"OpenAI error: {e}")
+            await update.message.reply_text("⚠️ خطأ في الاتصال بـ OpenAI.")
+        await thinking_msg.delete()
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("🚫 هذا الأمر مخصص للمسؤول فقط.")
+        await update.message.reply_text("🚫 هذا الأمر للمسؤول فقط.")
         return
     context.user_data["broadcast_mode"] = True
-    await update.message.reply_text("📝 أرسل النص أو الصورة أو الفيديو لإرساله لجميع المستخدمين.")
+    await update.message.reply_text("📝 أرسل الآن النص أو الصورة أو الفيديو لإرساله لجميع المستخدمين.")
 
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("broadcast_mode"):
@@ -99,6 +101,7 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["broadcast_mode"] = False
     users = load_users()
     msg = update.message
+
     for uid in users:
         try:
             if msg.text:
@@ -108,19 +111,19 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif msg.video:
                 await context.bot.send_video(chat_id=uid, video=msg.video.file_id, caption=msg.caption)
         except Exception as e:
-            logging.warning(f"⚠️ لم يتم الإرسال إلى {uid}: {e}")
-    await update.message.reply_text("✅ تم إرسال الرسالة لجميع المستخدمين.")
+            logging.warning(f"لم يتم الإرسال إلى {uid}: {e}")
+
+    await update.message.reply_text("✅ تم إرسال الإعلان.")
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_ID), handle_broadcast))
     app.add_handler(MessageHandler(filters.ALL, handle_message))
 
-    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
-
+    # Webhook
+    webhook_url = f"https://telegram-bot-fyro.onrender.com/{BOT_TOKEN}"
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
