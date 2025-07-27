@@ -7,7 +7,7 @@ import openai
 from datetime import datetime
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove, InputMediaPhoto, InputMediaVideo
+    ReplyKeyboardRemove
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -185,7 +185,6 @@ async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer("🚫 تم الإلغاء.")
     await query.edit_message_text("🚫 تم إلغاء الاشتراك.")
 
-# قائمة المشتركين للأدمن مع زر إلغاء الاشتراك
 async def subscribers_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -221,10 +220,6 @@ async def cancel_subscriber(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تحميل الفيديو باستخدام yt-dlp
 async def download_video(url, quality="720"):
-    # بناء أمر yt-dlp لتنزيل الفيديو بالجودة المطلوبة
-    # هنا مثال بسيط جداً، تحتاج تعديل حسب مكتبة yt-dlp لديك
-
-    # تأكد أن yt-dlp مثبت في البيئة
     ytdlp_cmd = [
         "yt-dlp",
         "-f",
@@ -233,10 +228,8 @@ async def download_video(url, quality="720"):
         "video.%(ext)s",
         url
     ]
-
     process = subprocess.run(ytdlp_cmd, capture_output=True, text=True)
     if process.returncode == 0:
-        # نبحث عن ملف الفيديو الذي تم تنزيله (video.mp4 غالبًا)
         for file in os.listdir("."):
             if file.startswith("video.") and file.endswith(("mp4", "mkv", "webm")):
                 return file
@@ -244,7 +237,6 @@ async def download_video(url, quality="720"):
         logging.error(f"yt-dlp error: {process.stderr}")
     return None
 
-# أمر تحميل الفيديو
 async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -259,7 +251,6 @@ async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ الرابط غير صالح.")
         return
 
-    # تحقق من الحد
     if not check_limits(user.id, "video"):
         await send_limit_message(update)
         return
@@ -279,35 +270,36 @@ async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ حدث خطأ أثناء تحميل الفيديو.")
 
-# أمر الذكاء الاصطناعي (استدعاء OpenAI)
+# أمر الذكاء الاصطناعي (OpenAI)
 async def ai_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
+
+    if len(context.args) < 1:
+        await update.message.reply_text("❌ الرجاء إرسال نص لطلب الذكاء الاصطناعي.")
+        return
 
     if not check_limits(user.id, "ai"):
         await send_limit_message(update)
         return
 
     prompt = " ".join(context.args)
-    if not prompt:
-        await update.message.reply_text("❌ الرجاء إرسال نص بعد الأمر.")
-        return
-
     try:
         response = openai.Completion.create(
             engine="text-davinci-003",
             prompt=prompt,
             max_tokens=150,
+            n=1,
+            stop=None,
             temperature=0.7
         )
         answer = response.choices[0].text.strip()
-        await update.message.reply_text(answer)
-        update_stats("ai", "ai")
+        await update.message.reply_text(f"🤖 {answer}")
+        update_stats("ai", "")
     except Exception as e:
         logging.error(f"OpenAI error: {e}")
         await update.message.reply_text("❌ حدث خطأ أثناء معالجة الطلب.")
 
-# إحصائيات الاستخدام
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -326,14 +318,11 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # الأوامر
     app.add_handler(CommandHandler("start", lambda update, context: update.message.reply_text("🤖 مرحبًا بك! أرسل رابط فيديو أو استخدم الأوامر.")))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("subscribers", subscribers_list))
     app.add_handler(CommandHandler("download", download_command))
     app.add_handler(CommandHandler("ai", ai_command))
-
-    # ردود أزرار الاشتراك
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("subscribers", subscribers_list))
     app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
     app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
     app.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_sub\\|"))
