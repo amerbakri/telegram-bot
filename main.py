@@ -54,18 +54,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 أهلاً! أرسل رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
     )
 
+# ترحيب بالأعضاء الجدد
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member: ChatMemberUpdated = update.chat_member
     if member.new_chat_member.status == "member":
         user = member.new_chat_member.user
-       await context.bot.send_message(
-    chat_id=update.chat_member.chat.id,
-    text=(
-        f"👋 مرحباً {user.first_name}!\n"
-        "🛠️ صيانة واستشارات ولا أحلى!\n"
-        "📥 أرسل رابط لتحميل الفيديو أو اسأل أي سؤال عن الصيانة."
-    )
-)
+        await context.bot.send_message(
+            chat_id=update.chat_member.chat.id,
+            text=(
+                f"👋 مرحباً {user.first_name}!\n"
+                "🛠️ صيانة واستشارات ولا أحلى!\n"
+                "📥 أرسل رابط لتحميل الفيديو أو اسأل أي سؤال عن الصيانة."
+            )
+        )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
