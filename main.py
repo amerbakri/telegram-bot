@@ -24,6 +24,7 @@ ADMIN_ID = 337597459
 USERS_FILE = "users.txt"
 STATS_FILE = "stats.json"
 LIMITS_FILE = "limits.json"
+SUBSCRIPTIONS_FILE = "subscriptions.json"
 
 DAILY_VIDEO_LIMIT = 3
 DAILY_AI_LIMIT = 5
@@ -82,7 +83,27 @@ def update_stats(action, quality):
     stats["most_requested_quality"] = max(stats["quality_counts"], key=stats["quality_counts"].get)
     save_stats(stats)
 
+def is_subscribed(user_id):
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        return False
+    with open(SUBSCRIPTIONS_FILE, "r") as f:
+        data = json.load(f)
+    return str(user_id) in data
+
+def activate_subscription(user_id):
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        data = {}
+    else:
+        with open(SUBSCRIPTIONS_FILE, "r") as f:
+            data = json.load(f)
+    data[str(user_id)] = {"active": True, "date": datetime.utcnow().isoformat()}
+    with open(SUBSCRIPTIONS_FILE, "w") as f:
+        json.dump(data, f)
+
 def check_limits(user_id, action):
+    if is_subscribed(user_id):
+        return True
+
     today = datetime.utcnow().strftime("%Y-%m-%d")
     if not os.path.exists(LIMITS_FILE):
         limits = {}
@@ -128,5 +149,19 @@ async def handle_subscription_request(update: Update, context: ContextTypes.DEFA
     await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=keyboard)
     await update.callback_query.answer("✅ تم إرسال الطلب للأدمن.")
 
-# أضف هذا الهاندلر داخل التطبيق:
-app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
+async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, user_id = query.data.split("|")
+    activate_subscription(user_id)
+    await context.bot.send_message(chat_id=int(user_id), text="✅ تم تفعيل اشتراكك بنجاح! يمكنك الآن الاستخدام غير المحدود.")
+    await query.answer("✅ تم التفعيل.")
+    await query.edit_message_text("✅ تم تفعيل اشتراك المستخدم.")
+
+async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer("❌ تم إلغاء الطلب.")
+    await update.callback_query.edit_message_text("🚫 تم إلغاء الاشتراك.")
+
+# لإضافة الهاندلرز الجدد في التطبيق:
+# app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
+# app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
+# app.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_sub$"))
