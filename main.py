@@ -27,7 +27,7 @@ openai.api_key = OPENAI_API_KEY
 url_store = {}
 
 USERS_FILE = "users.json"
-ADMIN_ID = 6507290608
+ADMIN_ID = 337597459
 
 def load_users():
     if not os.path.exists(USERS_FILE):
