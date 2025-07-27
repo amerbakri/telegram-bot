@@ -1,190 +1,251 @@
 import os
+import subprocess
+import logging
+import re
 import json
-import yt_dlp
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import openai
+from datetime import datetime
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardRemove
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, CallbackQueryHandler, filters
 )
-from aiohttp import web
+
+logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
-APP_URL = os.getenv("APP_URL")  # مثل: https://yourapp.onrender.com
-PORT = int(os.getenv("PORT", "8443"))
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+COOKIES_FILE = "cookies.txt"
 
-FREE_LIMIT = 3
-FREE_USERS_FILE = 'free_users.json'
-PAID_USERS_FILE = 'paid_users.json'
+ADMIN_ID = 337597459
+USERS_FILE = "users.txt"
+STATS_FILE = "stats.json"
+LIMITS_FILE = "limits.json"
+SUBSCRIPTIONS_FILE = "subscriptions.json"
 
-def load_users(file):
-    if not os.path.exists(file): return []
-    with open(file, 'r') as f: return json.load(f)
+DAILY_VIDEO_LIMIT = 3
+DAILY_AI_LIMIT = 5
 
-def save_users(file, users):
-    with open(file, 'w') as f: json.dump(users, f)
+if not BOT_TOKEN or not OPENAI_API_KEY:
+    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
 
-def get_free_users(): return load_users(FREE_USERS_FILE)
-def get_paid_users(): return load_users(PAID_USERS_FILE)
+openai.api_key = OPENAI_API_KEY
+url_store = {}
 
-def is_paid_user(user_id): return str(user_id) in get_paid_users()
+quality_map = {
+    "720": "best[height<=720][ext=mp4]",
+    "480": "best[height<=480][ext=mp4]",
+    "360": "best[height<=360][ext=mp4]",
+}
 
-def add_free_user(user_id):
-    users = get_free_users()
-    uid = str(user_id)
-    if uid not in users:
-        users.append(uid)
-        save_users(FREE_USERS_FILE, users)
+def is_valid_url(text):
+    pattern = re.compile(
+        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
+    )
+    return bool(pattern.match(text))
 
-def save_paid_user(user_id):
-    users = get_paid_users()
-    uid = str(user_id)
-    if uid not in users:
-        users.append(uid)
-        save_users(PAID_USERS_FILE, users)
+def store_user(user):
+    try:
+        if not os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "w") as f:
+                pass
+        with open(USERS_FILE, "r") as f:
+            users = f.read().splitlines()
+        entry = f"{user.id}|{user.username or 'NO_USERNAME'}|{user.first_name or ''} {user.last_name or ''}".strip()
+        if not any(str(user.id) in u for u in users):
+            with open(USERS_FILE, "a") as f:
+                f.write(f"{entry}\n")
+    except Exception as e:
+        logging.error(f"خطأ بتخزين المستخدم: {e}")
 
-# === /start ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def load_stats():
+    if not os.path.exists(STATS_FILE):
+        return {
+            "total_downloads": 0,
+            "quality_counts": {"720": 0, "480": 0, "360": 0, "audio": 0},
+            "most_requested_quality": None
+        }
+    with open(STATS_FILE, "r") as f:
+        return json.load(f)
+
+def save_stats(stats):
+    with open(STATS_FILE, "w") as f:
+        json.dump(stats, f)
+
+def update_stats(action, quality):
+    stats = load_stats()
+    stats["total_downloads"] += 1
+    key = quality if action != "audio" else "audio"
+    stats["quality_counts"][key] = stats["quality_counts"].get(key, 0) + 1
+    stats["most_requested_quality"] = max(stats["quality_counts"], key=stats["quality_counts"].get)
+    save_stats(stats)
+
+def is_subscribed(user_id):
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        return False
+    with open(SUBSCRIPTIONS_FILE, "r") as f:
+        data = json.load(f)
+    return str(user_id) in data
+
+def activate_subscription(user_id):
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        data = {}
+    else:
+        with open(SUBSCRIPTIONS_FILE, "r") as f:
+            data = json.load(f)
+    data[str(user_id)] = {"active": True, "date": datetime.utcnow().isoformat()}
+    with open(SUBSCRIPTIONS_FILE, "w") as f:
+        json.dump(data, f)
+
+def check_limits(user_id, action):
+    if is_subscribed(user_id):
+        return True
+
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    if not os.path.exists(LIMITS_FILE):
+        limits = {}
+    else:
+        with open(LIMITS_FILE, "r") as f:
+            limits = json.load(f)
+
+    user_limits = limits.get(str(user_id), {})
+    if user_limits.get("date") != today:
+        user_limits = {"date": today, "video": 0, "ai": 0}
+
+    if action == "video" and user_limits["video"] >= DAILY_VIDEO_LIMIT:
+        return False
+    if action == "ai" and user_limits["ai"] >= DAILY_AI_LIMIT:
+        return False
+
+    user_limits[action] += 1
+    limits[str(user_id)] = user_limits
+    with open(LIMITS_FILE, "w") as f:
+        json.dump(limits, f)
+    return True
+
+async def send_limit_message(update: Update):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
+    ])
+    await update.message.reply_text(
+        "🚫 لقد وصلت للحد اليومي المجاني.\n"
+        "للاستخدام غير محدود، اشترك بـ 2 دينار شهريًا عبر أورنج كاش:\n"
+        "📲 الرقم: 0781200500\nثم اضغط على الزر أدناه لتأكيد الاشتراك.",
+        reply_markup=keyboard
+    )
+
+# -- هنا يبدأ تعديل الاشتراك مع رقم الهاتف --
+
+async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    keyboard = [
-        [InlineKeyboardButton("📥 تحميل فيديو", callback_data=f"video|{user.id}")],
-        [InlineKeyboardButton("🎧 تحميل صوت", callback_data=f"audio|{user.id}")],
-        [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request_user")],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{user.id}")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("أهلاً! اختر نوع التحميل:", reply_markup=reply_markup)
+    await update.callback_query.edit_message_text(
+        "💳 للاشتراك:\n"
+        "أرسل رقم هاتفك هنا أولاً (مثال: 0781234567):"
+    )
+    context.user_data["awaiting_phone"] = True
+    await update.callback_query.answer()
 
-# === طلب الاشتراك من المستخدم ===
-async def subscribe_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+async def phone_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_phone"):
+        return
 
-    user = query.from_user
-    admin_keyboard = InlineKeyboardMarkup([
+    phone = update.message.text.strip()
+    if not re.match(r"^(07|09)\d{7,8}$", phone):  # مثال لرقم هاتف أردني يبدأ ب07 أو 09 ثم 7-8 أرقام
+        await update.message.reply_text("⚠️ رقم الهاتف غير صحيح. حاول مجددًا (مثال: 0781234567).")
+        return
+
+    context.user_data["phone"] = phone
+    context.user_data["awaiting_phone"] = False
+    context.user_data["awaiting_receipt"] = True
+
+    await update.message.reply_text(
+        "✅ تم استلام رقم الهاتف.\n"
+        "الآن، أرسل صورة إيصال الدفع الخاص بالاشتراك."
+    )
+
+async def receipt_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_receipt"):
+        return
+
+    if not update.message.photo:
+        await update.message.reply_text("⚠️ أرسل صورة الإيصال فقط.")
+        return
+
+    phone = context.user_data.get("phone")
+    photo_file_id = update.message.photo[-1].file_id
+
+    context.user_data["awaiting_receipt"] = False
+
+    # أرسل رسالة للأدمن مع صورة + رقم الهاتف وأزرار تأكيد/رفض
+    keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"admin_confirm_subscribe|{user.id}"),
-            InlineKeyboardButton("❌ إلغاء الاشتراك", callback_data=f"admin_cancel_subscribe|{user.id}")
+            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm_sub|{update.effective_user.id}"),
+            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"cancel_sub|{update.effective_user.id}")
         ]
     ])
-    try:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"📥 طلب اشتراك جديد:\n"
-            f"👤 الاسم: {user.full_name}\n"
-            f"📎 المعرف: @{user.username or 'غير متوفر'}\n"
-            f"🆔 آيدي: {user.id}",
-            reply_markup=admin_keyboard
-        )
-        await query.edit_message_text("✅ تم إرسال طلبك للإدارة. يرجى الانتظار.")
-    except Exception as e:
-        await query.edit_message_text(f"❌ حدث خطأ: {e}")
 
-# === تأكيد / إلغاء من الأدمن ===
-async def admin_subscription_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_photo(
+        chat_id=ADMIN_ID,
+        photo=photo_file_id,
+        caption=f"👤 طلب اشتراك جديد:\nرقم الهاتف: {phone}\nالمستخدم: @{update.effective_user.username or update.effective_user.id}",
+        reply_markup=keyboard
+    )
+
+    await update.message.reply_text("تم إرسال طلب الاشتراك للأدمن، يرجى الانتظار للتأكيد.")
+
+async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    _, user_id = query.data.split("|")
+    activate_subscription(user_id)
+    await context.bot.send_message(chat_id=int(user_id), text="✅ تم تفعيل اشتراكك بنجاح! يمكنك الآن الاستخدام غير المحدود.")
+    await query.answer("✅ تم التفعيل.")
+    await query.edit_message_text("✅ تم تفعيل اشتراك المستخدم.")
 
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("🚫 هذا الزر مخصص للإدارة فقط.", show_alert=True)
-        return
-
-    data = query.data
-    action, user_id_str = data.split("|")
-    user_id = int(user_id_str)
-
-    if action == "admin_confirm_subscribe":
-        save_paid_user(user_id_str)
-        await query.edit_message_text(f"✅ تم تفعيل الاشتراك لـ {user_id}")
-        try:
-            await context.bot.send_message(user_id, "🎉 تم تفعيل اشتراكك المدفوع. شكراً لك!")
-        except:
-            pass
-
-    elif action == "admin_cancel_subscribe":
-        await query.edit_message_text(f"❌ تم رفض الاشتراك لـ {user_id}")
-        try:
-            await context.bot.send_message(user_id, "❌ تم رفض طلب الاشتراك.")
-        except:
-            pass
-
-# === تحميل الفيديو أو الصوت ===
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    message = update.message
-
-    if not message.text.startswith("http"):
-        await message.reply_text("📎 الرجاء إرسال رابط يوتيوب صالح.")
-        return
-
-    if not is_paid_user(user_id):
-        add_free_user(user_id)
-        user_usage = get_free_users().count(str(user_id))
-        if user_usage > FREE_LIMIT:
-            await message.reply_text("⚠️ تجاوزت الحد المجاني. اشترك للوصول الكامل.")
-            return
-
-    url = message.text
-    ydl_opts = {'outtmpl': 'downloads/%(title)s.%(ext)s'}
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            title = info.get('title', 'video')
-            formats = info.get('formats', [])
-            video_url = formats[-1]['url']
-
-        await message.reply_text(f"✅ تم تحليل الرابط: {title}\n🎬 الرابط المباشر:\n{video_url}")
-    except Exception as e:
-        await message.reply_text(f"❌ خطأ في التحميل: {e}")
-
-# === معالجات الأزرار ===
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
-    action, uid = data.split("|")
+    _, user_id = query.data.split("|")
+    await context.bot.send_message(chat_id=int(user_id), text="❌ تم رفض طلب الاشتراك.")
+    await query.answer("🚫 تم الإلغاء.")
+    await query.edit_message_text("🚫 تم إلغاء الاشتراك.")
 
-    if str(update.effective_user.id) != uid:
-        await query.answer("❌ هذا الزر ليس لك!", show_alert=True)
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
         return
+    stats = load_stats()
+    msg = (
+        f"📊 <b>إحصائيات الاستخدام:</b>\n"
+        f"- إجمالي التنزيلات: {stats['total_downloads']}\n"
+        f"- 720p: {stats['quality_counts']['720']}\n"
+        f"- 480p: {stats['quality_counts']['480']}\n"
+        f"- 360p: {stats['quality_counts']['360']}\n"
+        f"- صوت فقط: {stats['quality_counts']['audio']}\n"
+        f"- الأكثر طلبًا: {stats['most_requested_quality']}"
+    )
+    await update.message.reply_text(msg, parse_mode="HTML")
 
-    if action == "video":
-        await query.edit_message_text("📎 أرسل رابط الفيديو:")
-    elif action == "audio":
-        await query.edit_message_text("🎵 أرسل رابط الفيديو لتحويله إلى صوت:")
-    elif action == "cancel":
-        await query.edit_message_text("❌ تم الإلغاء.")
+# باقي الكود (تنزيل الفيديوهات، التعامل مع الروابط، الاستخدام، إلخ) يبقى كما هو لديك
 
-# === Webhook handler ===
-async def handle(request):
-    data = await request.json()
-    update = Update.de_json(data, app.bot)
-    await app.update_queue.put(update)
-    return web.Response(text="OK")
-
-# === إنشاء البوت وتسجيل المعالجات ===
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(subscribe_request_handler, pattern="^subscribe_request_user$"))
-app.add_handler(CallbackQueryHandler(admin_subscription_response_handler, pattern="^admin_(confirm|cancel)_subscribe\|"))
-app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-
-# === إعداد سيرفر aiohttp لتلقي Webhook ===
-web_app = web.Application()
-web_app.router.add_post(f"/{BOT_TOKEN}", handle)
-
-async def on_startup(app_web):
-    await app.bot.set_webhook(f"{APP_URL}/{BOT_TOKEN}")
-
-async def on_cleanup(app_web):
-    await app.bot.delete_webhook()
-
-web_app.on_startup.append(on_startup)
-web_app.on_cleanup.append(on_cleanup)
-
-# === تشغيل الخادم ===
 if __name__ == "__main__":
-    print("🚀 Webhook Bot is running...")
-    web.run_app(web_app, host="0.0.0.0", port=PORT)
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # أوامر أساسية
+    app.add_handler(CommandHandler("start", lambda update, context: update.message.reply_text("🤖 مرحبًا بك! أرسل رابط فيديو أو استخدم الأوامر.")))
+    app.add_handler(CommandHandler("stats", stats_command))
+
+    # التعامل مع الاشتراك
+    app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
+    app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
+    app.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_sub\\|"))
+
+    # استقبال رقم الهاتف بعد طلب الاشتراك
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, phone_handler))
+
+    # استقبال صورة الإيصال بعد رقم الهاتف
+    app.add_handler(MessageHandler(filters.PHOTO, receipt_handler))
+
+    # لا تنسى إضافة باقي الهاندلرز الخاصة بتنزيل الفيديو، أزرار الفيديو، وغيرها حسب كودك الأصلي
+
+    app.run_polling()
