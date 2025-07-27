@@ -4,8 +4,7 @@ import logging
 import re
 import openai
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -62,8 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_announcement"):
-        # أثناء انتظار الإعلان تجاهل هنا، حتى لا يحدث تداخل
-        return
+        return  # تجاهل أثناء انتظار الإعلان
 
     if not update.message or not update.message.text:
         return
@@ -74,7 +72,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if not is_valid_url(text):
-        # استدعاء OpenAI فقط لو لم تكن في وضع إعلان
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -118,7 +115,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "cancel":
-        await query.edit_message_text("❌ تم الإلغاء.")
+        await query.edit_message_text("❌ تم الإلغاء.", reply_markup=None)
         url_store.pop(key, None)
         return
 
@@ -145,7 +142,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             capture_output=True, text=True
         )
         if fallback.returncode != 0:
-            await query.edit_message_text("🚫 فشل في تحميل الفيديو.")
+            await query.edit_message_text("🚫 فشل في تحميل الفيديو.", reply_markup=None)
             url_store.pop(key, None)
             return
 
@@ -222,12 +219,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                                       ]))
 
     elif data == "admin_broadcast":
-        await query.edit_message_text("📝 أرسل لي الإعلان (نص أو صورة أو فيديو مع نص):")
+        await query.edit_message_text("📝 أرسل لي الإعلان (نص فقط حالياً):")
         context.user_data["waiting_for_announcement"] = True
 
     elif data == "admin_close":
-        await query.edit_message_text("❌ تم إغلاق لوحة التحكم.",
-                                      reply_markup=ReplyKeyboardRemove())
+        await query.edit_message_text("❌ تم إغلاق لوحة التحكم.", reply_markup=None)
 
     elif data == "admin_back":
         await admin_panel(update, context)
@@ -237,7 +233,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["waiting_for_search"] = True
 
     elif data.startswith("admin_search_result_"):
-        # الضغط على نتيجة البحث لعرض التفاصيل
         selected_uid = data.split("_")[-1]
         try:
             with open(USERS_FILE, "r") as f:
@@ -256,32 +251,31 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                                          [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
                                      ]))
 
+
 # استقبال نص الإعلان أو البحث
 async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
         return
 
-    text = update.message.text
+    text = update.message.text.strip()
 
     if context.user_data.get("waiting_for_announcement"):
-        # إرسال إعلان إلى جميع المستخدمين
         context.user_data["waiting_for_announcement"] = False
         try:
             with open(USERS_FILE, "r") as f:
                 users = f.read().splitlines()
             sent = 0
             for u in users:
-                uid = int(u.split("|")[0])
+                uid = u.split("|")[0]
                 try:
-                    await context.bot.send_message(chat_id=uid, text=text)
+                    await context.bot.send_message(chat_id=int(uid), text=text)
                     sent += 1
                 except:
                     pass
-            await update.message.reply_text(f"✅ تم إرسال الإعلان إلى {sent} مستخدمًا.",
-                                            reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text(f"✅ تم إرسال الإعلان إلى {sent} مستخدمًا.")
         except Exception as e:
-            await update.message.reply_text(f"❌ خطأ في الإرسال: {e}", reply_markup=ReplyKeyboardRemove())
+            await update.message.reply_text(f"❌ خطأ في الإرسال: {e}")
         return
 
     if context.user_data.get("waiting_for_search"):
@@ -293,13 +287,14 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             results = []
             for u in users:
                 uid, username, name = u.split("|")
-                if query in uid.lower() or query in username.lower() or query in name.lower():
+                # لا تطبق lower على uid لأنه أرقام
+                if query in uid or query in username.lower() or query in name.lower():
                     results.append((uid, username, name))
             if not results:
                 await update.message.reply_text("❌ لم يتم العثور على أي مستخدم.")
                 return
             buttons = []
-            for uid, username, name in results[:10]:  # عرض أول 10 نتائج فقط
+            for uid, username, name in results[:10]:
                 buttons.append([InlineKeyboardButton(f"{name} | @{username}", callback_data=f"admin_search_result_{uid}")])
             buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
             await update.message.reply_text("📋 نتائج البحث:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -307,7 +302,6 @@ async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"❌ خطأ في البحث: {e}")
         return
 
-# --- هنا بإمكانك إضافة معالجات الوسائط للإعلان مع تعديلات مماثلة ---
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
