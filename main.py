@@ -3,6 +3,7 @@ import subprocess
 import logging
 import re
 import json
+import datetime
 import openai
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -22,6 +23,12 @@ COOKIES_FILE = "cookies.txt"
 ADMIN_ID = 337597459
 USERS_FILE = "users.txt"
 STATS_FILE = "stats.json"
+USAGE_FILE = "usage.json"
+PAID_USERS_FILE = "paid_users.txt"
+
+# حدود الاستخدام للمجانيين
+MAX_VIDEO_DOWNLOADS_FREE = 3
+MAX_AI_REQUESTS_FREE = 5
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
     raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
@@ -55,6 +62,61 @@ def store_user(user):
     except Exception as e:
         logging.error(f"خطأ بتخزين المستخدم: {e}")
 
+def load_json(file_path):
+    if not os.path.exists(file_path):
+        return {}
+    with open(file_path, "r") as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
+
+def save_json(file_path, data):
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+
+def load_paid_users():
+    if not os.path.exists(PAID_USERS_FILE):
+        return set()
+    with open(PAID_USERS_FILE, "r") as f:
+        return set(line.strip() for line in f)
+
+def save_paid_user(user_id):
+    with open(PAID_USERS_FILE, "a") as f:
+        f.write(f"{user_id}\n")
+
+def is_paid_user(user_id):
+    paid_users = load_paid_users()
+    return str(user_id) in paid_users
+
+def reset_daily_usage_if_needed(usage_data):
+    today_str = datetime.date.today().isoformat()
+    if usage_data.get("date") != today_str:
+        usage_data["date"] = today_str
+        usage_data["video_downloads"] = {}
+        usage_data["ai_requests"] = {}
+    return usage_data
+
+def increment_usage(user_id, usage_type):
+    usage_data = load_json(USAGE_FILE)
+    usage_data = reset_daily_usage_if_needed(usage_data)
+
+    user_id_str = str(user_id)
+    if usage_type == "video":
+        count = usage_data["video_downloads"].get(user_id_str, 0)
+        if count >= MAX_VIDEO_DOWNLOADS_FREE:
+            return False
+        usage_data["video_downloads"][user_id_str] = count + 1
+
+    elif usage_type == "ai":
+        count = usage_data["ai_requests"].get(user_id_str, 0)
+        if count >= MAX_AI_REQUESTS_FREE:
+            return False
+        usage_data["ai_requests"][user_id_str] = count + 1
+
+    save_json(USAGE_FILE, usage_data)
+    return True
+
 def load_stats():
     if not os.path.exists(STATS_FILE):
         return {
@@ -84,7 +146,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
     await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
+        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥\n"
+        "💡 الحد المجاني: 3 فيديوهات و5 استفسارات AI يومياً.\n"
+        "🔔 للاشتراك المدفوع، راسل الأدمن."
     )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,9 +157,28 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
+    # تحقق الاشتراك أو الحد اليومي
+    if not is_paid_user(user.id):
+        allowed = increment_usage(user.id, "video")
+        if not allowed:
+            await update.message.reply_text(
+                "🚫 وصلت إلى الحد المجاني اليومي (3 فيديوهات).\n"
+                "للمتابعة، اشترك عبر رقم 0781200500 (أورنج)."
+            )
+            return
+
     text = update.message.text.strip()
 
     if not is_valid_url(text):
+        # AI usage limit check
+        if not is_paid_user(user.id):
+            allowed = increment_usage(user.id, "ai")
+            if not allowed:
+                await update.message.reply_text(
+                    "🚫 وصلت إلى الحد المجاني اليومي لاستفسارات AI (5 مرات).\n"
+                    "للمتابعة، اشترك عبر رقم 0781200500 (أورنج)."
+                )
+                return
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -206,6 +289,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_broadcast")],
         [InlineKeyboardButton("🔍 بحث مستخدم", callback_data="admin_search")],
         [InlineKeyboardButton("📊 إحصائيات التحميل", callback_data="admin_stats")],
+        [InlineKeyboardButton("👑 إضافة مشترك مدفوع", callback_data="admin_addpaid")],
         [InlineKeyboardButton("❌ إغلاق", callback_data="admin_close")]
     ]
 
@@ -261,6 +345,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
         ]))
 
+    elif data == "admin_addpaid":
+        await query.edit_message_text(
+            "📥 أرسل آيدي المستخدم الذي تريد إضافته كمشترك مدفوع.\n"
+            "مثال: 123456789"
+        )
+        context.user_data["waiting_for_addpaid"] = True
+
     elif data == "admin_close":
         await query.edit_message_text("❌ تم إغلاق لوحة التحكم.", reply_markup=ReplyKeyboardRemove())
 
@@ -300,6 +391,16 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
         return
 
+    if context.user_data.get("waiting_for_addpaid"):
+        context.user_data["waiting_for_addpaid"] = False
+        new_paid_id = update.message.text.strip()
+        if not new_paid_id.isdigit():
+            await update.message.reply_text("⚠️ آيدي غير صالح. أرسل رقم آيدي صحيح.")
+            return
+        save_paid_user(new_paid_id)
+        await update.message.reply_text(f"✅ تم إضافة المستخدم {new_paid_id} كمشترك مدفوع.")
+        return
+
 async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     message = context.user_data.get("announcement")
@@ -321,7 +422,7 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 elif message.text:
                     await context.bot.send_message(uid, message.text)
                 else:
-                    # يدعم أنواع أخرى مثل فيديوهات وثائق أو غيرها، أضف حسب الحاجة
+                    # يمكن إضافة دعم أنواع أخرى إذا لزم الأمر
                     pass
                 sent += 1
             except:
@@ -338,11 +439,14 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("addpaid", lambda u,c: add_paid_user(u, c)))  # غير مستخدم مباشرة، نستعمل لوحة التحكم
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)"))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(confirm_broadcast, pattern="^confirm_broadcast$"))
     app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
+
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
