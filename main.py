@@ -98,10 +98,6 @@ def reset_daily_usage_if_needed(usage_data):
     return usage_data
 
 def increment_usage(user_id, usage_type):
-    # إذا مش مدفوع، نتحقق ونزيد العد
-    if is_paid_user(user_id):
-        return True
-
     usage_data = load_json(USAGE_FILE)
     usage_data = reset_daily_usage_if_needed(usage_data)
 
@@ -166,7 +162,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         allowed = increment_usage(user.id, "video")
         if not allowed:
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
+                [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request_user")]
             ])
             await update.message.reply_text(
                 "🚫 وصلت إلى الحد المجاني اليومي (3 فيديوهات).\n"
@@ -185,7 +181,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             allowed = increment_usage(user.id, "ai")
             if not allowed:
                 keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
+                    [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request_user")]
                 ])
                 await update.message.reply_text(
                     "🚫 وصلت إلى الحد المجاني اليومي لاستفسارات AI (5 مرات).\n"
@@ -225,6 +221,15 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def subscribe_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "للاشتراك، يرجى إرسال 2 دينار على الرقم:\n"
+        "📲 0781200500 (أورنج كاش)\n"
+        "بعد الدفع، أرسل لي آيدي المستخدم لتفعيل الاشتراك المدفوع."
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -374,9 +379,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "admin_back":
         await admin_panel(update, context)
 
-    elif data == "subscribe_request":
-        await query.answer("للاشتراك، اتصل بالأدمن على الرقم 0781200500", show_alert=True)
-
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_announcement"):
         context.user_data["waiting_for_announcement"] = False
@@ -415,9 +417,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         new_paid_id = update.message.text.strip()
         if not new_paid_id.isdigit():
             await update.message.reply_text("⚠️ آيدي غير صالح. أرسل رقم آيدي صحيح.")
-            return
-        if is_paid_user(new_paid_id):
-            await update.message.reply_text(f"⚠️ المستخدم {new_paid_id} مضاف مسبقاً كمشترك مدفوع.")
             return
         save_paid_user(new_paid_id)
         await update.message.reply_text(f"✅ تم إضافة المستخدم {new_paid_id} كمشترك مدفوع.")
@@ -461,16 +460,13 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
-
-    # حذفت addpaid command handler لأنها غير معرفة، والآن فقط لوحة التحكم تستعمل
-    # app.add_handler(CommandHandler("addpaid", lambda u,c: add_paid_user(u, c)))
+    app.add_handler(CommandHandler("addpaid", lambda u,c: add_paid_user(u, c)))  # غير مستخدم مباشرة، نستعمل لوحة التحكم
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)"))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(confirm_broadcast, pattern="^confirm_broadcast$"))
-    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^subscribe_request$"))  # زر الاشتراك
-
+    app.add_handler(CallbackQueryHandler(subscribe_request_handler, pattern="^subscribe_request_user$"))
     app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
 
     app.run_webhook(
