@@ -273,5 +273,4 @@ if __name__ == "__main__":
             url_path=BOT_TOKEN,
             webhook_url=f"https://{HOSTNAME}/{BOT_TOKEN}"
         )
-    else:
-        app.run_polling()
+
