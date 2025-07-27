@@ -161,9 +161,15 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("list_subscribers", list_subscribers))
     app.add_handler(CallbackQueryHandler(remove_subscriber, pattern="^remove_subscriber\|"))
     
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+import os
+
+port = int(os.getenv("PORT", "8443"))
+hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
+
+app.run_webhook(
+    listen="0.0.0.0",
+    port=port,
+    url_path=BOT_TOKEN,
+    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+)
+
