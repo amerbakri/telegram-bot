@@ -7,7 +7,7 @@ import openai
 from datetime import datetime
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove, InputMediaPhoto, InputMediaVideo
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -89,7 +89,7 @@ def is_subscribed(user_id):
         return False
     with open(SUBSCRIPTIONS_FILE, "r") as f:
         data = json.load(f)
-    return str(user_id) in data and data[str(user_id)].get("active", False)
+    return str(user_id) in data
 
 def activate_subscription(user_id):
     if not os.path.exists(SUBSCRIPTIONS_FILE):
@@ -138,6 +138,105 @@ async def send_limit_message(update: Update):
         reply_markup=keyboard
     )
 
+async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+
+    with open(REQUESTS_FILE, "a") as f:
+        f.write(f"{user.id}|{user.username or 'NO_USERNAME'}|{datetime.utcnow()}\n")
+
+    # إرسال رسالة للمستخدم
+    await update.callback_query.edit_message_text(
+        "💳 للاشتراك:\n"
+        "أرسل 2 دينار عبر أورنج كاش إلى الرقم:\n"
+        "📱 0781200500\n\n"
+        "ثم أرسل لقطة شاشة (صورة) من التحويل هنا ليتم تفعيل اشتراكك."
+    )
+
+    # إرسال إشعار للأدمن
+    msg = f"👤 المستخدم @{user.username or user.id} طلب الاشتراك.\nهل تريد تأكيد الاشتراك؟"
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm_sub|{user.id}"),
+            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel_sub|{user.id}")
+        ]
+    ])
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=keyboard)
+    await update.callback_query.answer("✅ تم إرسال التعليمات.")
+
+async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, user_id = query.data.split("|")
+    activate_subscription(user_id)
+    await context.bot.send_message(chat_id=int(user_id), text="✅ تم تفعيل اشتراكك بنجاح! يمكنك الآن الاستخدام غير المحدود.")
+    await query.answer("✅ تم التفعيل.")
+    await query.edit_message_text("✅ تم تفعيل اشتراك المستخدم.")
+
+async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, user_id = query.data.split("|")
+    await context.bot.send_message(chat_id=int(user_id), text="❌ تم رفض طلب الاشتراك.")
+    await query.answer("🚫 تم الإلغاء.")
+    await query.edit_message_text("🚫 تم إلغاء الاشتراك.")
+
+# أمر جديد: عرض قائمة المشتركين مع زر إلغاء الاشتراك
+async def show_subscribers(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ هذا الأمر للأدمن فقط.")
+        return
+
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        await update.message.reply_text("⚠️ لا يوجد مشتركين حالياً.")
+        return
+
+    with open(SUBSCRIPTIONS_FILE, "r") as f:
+        data = json.load(f)
+
+    if not data:
+        await update.message.reply_text("⚠️ لا يوجد مشتركين حالياً.")
+        return
+
+    buttons = []
+    for user_id_str in data.keys():
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"❌ إلغاء الاشتراك {user_id_str}",
+                callback_data=f"cancel_subscription|{user_id_str}"
+            )
+        ])
+
+    await update.message.reply_text(
+        "📋 قائمة المشتركين (اضغط لإلغاء الاشتراك):",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+# هاندلر زر إلغاء الاشتراك في القائمة
+async def cancel_subscription_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("🚫 هذا الزر للأدمن فقط.", show_alert=True)
+        return
+
+    _, user_id = query.data.split("|")
+
+    if not os.path.exists(SUBSCRIPTIONS_FILE):
+        await query.answer("⚠️ ملف الاشتراكات غير موجود.")
+        return
+
+    with open(SUBSCRIPTIONS_FILE, "r") as f:
+        data = json.load(f)
+
+    if user_id not in data:
+        await query.answer("⚠️ المستخدم غير مشترك.")
+        return
+
+    data.pop(user_id)
+
+    with open(SUBSCRIPTIONS_FILE, "w") as f:
+        json.dump(data, f)
+
+    await query.answer("✅ تم إلغاء الاشتراك.")
+    await query.edit_message_text(f"❌ تم إلغاء اشتراك المستخدم {user_id} بنجاح.")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -153,14 +252,20 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
-    text = update.message.text.strip()
-
-    if not is_valid_url(text):
-        # هذا استدعاء AI (ChatGPT)
-        allowed = check_limits(user.id, "ai")
+    if not is_subscribed(user.id):
+        allowed = check_limits(user.id, "video")
         if not allowed:
             await send_limit_message(update)
             return
+
+    text = update.message.text.strip()
+
+    if not is_valid_url(text):
+        if not is_subscribed(user.id):
+            allowed = check_limits(user.id, "ai")
+            if not allowed:
+                await send_limit_message(update)
+                return
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -170,11 +275,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(reply)
         except Exception as e:
             await update.message.reply_text(f"⚠️ خطأ OpenAI: {e}")
-        return
-
-    allowed = check_limits(user.id, "video")
-    if not allowed:
-        await send_limit_message(update)
         return
 
     key = str(update.message.message_id)
@@ -217,7 +317,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير صالح أو منتهي.")
         return
 
-    await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
+    loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
     if action == "audio":
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
@@ -230,7 +330,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        # محاولة fallback
         fallback = subprocess.run(
             ["yt-dlp", "--cookies", COOKIES_FILE, "-f", "best[ext=mp4]", "-o", "video.%(ext)s", url],
             capture_output=True, text=True
@@ -240,71 +339,38 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             url_store.pop(key, None)
             return
 
-    if action == "video":
+    if action == "audio":
+        file_path = "audio.mp3"
+    else:
+        # العثور على ملف الفيديو (باستخدام امتدادات mp4 أو mkv)
         for ext in ["mp4", "mkv", "webm"]:
             if os.path.exists(f"video.{ext}"):
-                filename = f"video.{ext}"
+                file_path = f"video.{ext}"
                 break
+        else:
+            await query.edit_message_text("⚠️ تعذر العثور على الملف المحمل.")
+            return
 
-    if filename and os.path.exists(filename):
-        with open(filename, "rb") as f:
-            if action == "audio":
-                await query.message.reply_audio(f)
-            else:
-                await query.message.reply_video(f)
-        os.remove(filename)
-        update_stats(action, quality)
-    else:
-        await query.message.reply_text("🚫 لم يتم العثور على الملف.")
+    try:
+        with open(file_path, "rb") as f:
+            await query.message.reply_document(f)
+    except Exception as e:
+        await query.edit_message_text(f"⚠️ خطأ في الإرسال: {e}")
+        return
 
+    update_stats(action, quality)
     url_store.pop(key, None)
-
-async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
-    with open(REQUESTS_FILE, "a") as f:
-        f.write(f"{user.id}|{user.username or 'NO_USERNAME'}|{datetime.utcnow()}\n")
-
-    # إرسال رسالة للمستخدم
-    await update.callback_query.edit_message_text(
-        "💳 للاشتراك:\n"
-        "أرسل 2 دينار عبر أورنج كاش إلى الرقم:\n"
-        "📱 0781200500\n\n"
-        "ثم أرسل لقطة شاشة (صورة) من التحويل هنا ليتم تفعيل اشتراكك."
-    )
-
-    # إشعار للأدمن
-    msg = f"👤 المستخدم @{user.username or user.id} طلب الاشتراك.\nهل تريد تأكيد الاشتراك؟"
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm_sub|{user.id}"),
-            InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel_sub|{user.id}")
-        ]
-    ])
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, reply_markup=keyboard)
-    await update.callback_query.answer("✅ تم إرسال التعليمات.")
-
-async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    _, user_id = query.data.split("|")
-    activate_subscription(user_id)
-    await context.bot.send_message(chat_id=int(user_id), text="✅ تم تفعيل اشتراكك بنجاح! يمكنك الآن الاستخدام غير المحدود.")
-    await query.answer("✅ تم التفعيل.")
-    await query.edit_message_text("✅ تم تفعيل اشتراك المستخدم.")
-
-async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    _, user_id = query.data.split("|")
-    await context.bot.send_message(chat_id=int(user_id), text="❌ تم رفض طلب الاشتراك.")
-    await query.answer("🚫 تم الإلغاء.")
-    await query.edit_message_text("🚫 تم إلغاء الاشتراك.")
+    try:
+        os.remove(file_path)
+    except:
+        pass
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     stats = load_stats()
     msg = (
-        f"📊 إحصائيات الاستخدام:\n"
+        f"📊 <b>إحصائيات الاستخدام:</b>\n"
         f"- إجمالي التنزيلات: {stats['total_downloads']}\n"
         f"- 720p: {stats['quality_counts']['720']}\n"
         f"- 480p: {stats['quality_counts']['480']}\n"
@@ -312,25 +378,32 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"- صوت فقط: {stats['quality_counts']['audio']}\n"
         f"- الأكثر طلبًا: {stats['most_requested_quality']}"
     )
-    await update.message.reply_text(msg)
+    await update.message.reply_text(msg, parse_mode="HTML")
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8443"))
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)"))
+    app.add_handler(CommandHandler("subscribers", show_subscribers, filters=filters.User(user_id=ADMIN_ID)))
+
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), download))
+
     app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
     app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
     app.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_sub\\|"))
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+    app.add_handler(CallbackQueryHandler(cancel_subscription_button, pattern="^cancel_subscription\\|"))
+
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(audio|video|cancel)\\|"))
+
+  port = int(os.environ.get("PORT", 8443))
+hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+
+app.run_webhook(
+    listen="0.0.0.0",
+    port=port,
+    url_path=BOT_TOKEN,
+    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+)
+
