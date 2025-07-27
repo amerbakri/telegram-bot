@@ -187,9 +187,10 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(admin_actions, pattern=r"^admin\|"))
     app.add_handler(MessageHandler(filters.ALL, handle_broadcast))
 
-  
+
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
         url_path=BOT_TOKEN,
         webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+    )
