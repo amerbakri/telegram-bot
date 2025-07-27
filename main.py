@@ -1,37 +1,24 @@
+# main.py
 import os
 import subprocess
 import logging
 import re
-import openai
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated,
-    ReplyKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated, InputFile
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, CallbackQueryHandler, filters, ChatMemberHandler
+    ContextTypes, CallbackQueryHandler, filters
 )
 
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-COOKIES_FILE = "cookies.txt"
-
 ADMIN_ID = 337597459
+COOKIES_FILE = "cookies.txt"
 USERS_FILE = "users.txt"
-
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
-
-openai.api_key = OPENAI_API_KEY
 url_store = {}
-
-def is_valid_url(text):
-    pattern = re.compile(
-        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
-    )
-    return bool(pattern.match(text))
+user_ids = set()
 
 quality_map = {
     "720": "best[height<=720][ext=mp4]",
@@ -39,45 +26,32 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
-# تخزين معرف المستخدم في ملف إذا جديد
-def store_user(user_id):
-    try:
-        if not os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "w") as f:
-                pass
-        with open(USERS_FILE, "r") as f:
-            users = f.read().splitlines()
-        if str(user_id) not in users:
-            with open(USERS_FILE, "a") as f:
-                f.write(f"{user_id}\n")
-    except Exception as e:
-        logging.error(f"خطأ بتخزين المستخدم: {e}")
+def is_valid_url(text):
+    pattern = re.compile(
+        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
+    )
+    return bool(pattern.match(text))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    store_user(user_id)
-    await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
-    )
+    await update.message.reply_text("👋 أهلاً! أرسل رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥")
+
+def save_user(user_id):
+    if user_id not in user_ids:
+        user_ids.add(user_id)
+        with open(USERS_FILE, "a") as f:
+            f.write(f"{user_id}\n")
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+
     user_id = update.message.from_user.id
-    store_user(user_id)
+    save_user(user_id)
 
     text = update.message.text.strip()
 
     if not is_valid_url(text):
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": text}]
-            )
-            reply = response['choices'][0]['message']['content']
-            await update.message.reply_text(reply)
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ OpenAI: {e}")
+        await update.message.reply_text("🚫 الرابط غير مدعوم.")
         return
 
     key = str(update.message.message_id)
@@ -93,13 +67,8 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
 
-    # حذف رسالة الرابط بعد إظهار الأزرار
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.delete()
+    await update.message.chat.send_message("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -121,7 +90,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير صالح أو منتهي.")
         return
 
-    loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
+    status_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
     if action == "audio":
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
@@ -134,14 +103,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
-        fallback = subprocess.run(
-            ["yt-dlp", "--cookies", COOKIES_FILE, "-f", "best[ext=mp4]", "-o", "video.%(ext)s", url],
-            capture_output=True, text=True
-        )
-        if fallback.returncode != 0:
-            await query.edit_message_text("🚫 فشل في تحميل الفيديو.")
-            url_store.pop(key, None)
-            return
+        await query.message.reply_text("🚫 فشل في تحميل الفيديو.")
+        await status_msg.delete()
+        return
 
     if action == "video":
         for ext in ["mp4", "mkv", "webm"]:
@@ -156,83 +120,71 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.message.reply_video(f)
         os.remove(filename)
-    else:
-        await query.message.reply_text("🚫 لم يتم العثور على الملف.")
 
+    await status_msg.delete()
     url_store.pop(key, None)
 
-    # حذف رسالة "جاري التحميل" بعد الانتهاء
-    try:
-        await loading_msg.delete()
-    except:
-        pass
-
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
-        await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
+async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
         return
 
     keyboard = [
-        ["👥 عدد المستخدمين", "📢 إرسال إعلان"],
-        ["❌ إغلاق"]
+        [
+            InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin|count"),
+            InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin|broadcast")
+        ],
+        [InlineKeyboardButton("❌ إغلاق", callback_data="admin|close")]
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("اختر أمر:", reply_markup=reply_markup)
+    await update.message.reply_text("اختر أمر:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
-        return
+async def admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query.from_user.id != ADMIN_ID:
+        return await query.answer("🚫 غير مصرح")
 
-    text = update.message.text
+    await query.answer()
+    action = query.data.split("|")[1]
 
-    if text == "👥 عدد المستخدمين":
+    if action == "count":
         try:
-            with open(USERS_FILE, "r") as f:
-                users = f.read().splitlines()
-            count = len(users)
+            with open(USERS_FILE) as f:
+                count = len(set(f.read().splitlines()))
         except:
             count = 0
-        await update.message.reply_text(f"عدد المستخدمين المسجلين: {count}")
-    elif text == "📢 إرسال إعلان":
-        await update.message.reply_text("أرسل لي نص الإعلان الذي تريد إرساله للمستخدمين.")
-        context.user_data["waiting_for_announcement"] = True
-    elif text == "❌ إغلاق":
-        await update.message.reply_text("تم إغلاق لوحة تحكم الأدمن.", reply_markup=None)
-    else:
-        if context.user_data.get("waiting_for_announcement"):
-            announcement = text
+        await query.edit_message_text(f"👥 عدد المستخدمين: {count}")
+
+    elif action == "broadcast":
+        context.user_data["broadcast"] = True
+        await query.edit_message_text("📢 أرسل الرسالة الآن ليتم إرسالها لكل المستخدمين.")
+
+    elif action == "close":
+        await query.message.delete()
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("broadcast") and update.message.from_user.id == ADMIN_ID:
+        try:
+            with open(USERS_FILE) as f:
+                users = set(f.read().splitlines())
+        except:
+            users = set()
+
+        for uid in users:
             try:
-                with open(USERS_FILE, "r") as f:
-                    users = f.read().splitlines()
-                sent_count = 0
-                for uid in users:
-                    try:
-                        await context.bot.send_message(int(uid), announcement)
-                        sent_count += 1
-                    except:
-                        pass
-                await update.message.reply_text(f"تم إرسال الإعلان إلى {sent_count} مستخدم.")
-            except Exception as e:
-                await update.message.reply_text(f"حدث خطأ أثناء إرسال الإعلان: {e}")
-            context.user_data["waiting_for_announcement"] = False
+                await context.bot.copy_message(chat_id=int(uid), from_chat_id=update.message.chat_id, message_id=update.message.message_id)
+            except:
+                pass
+
+        await update.message.reply_text("✅ تم إرسال الإعلان.")
+        context.user_data["broadcast"] = False
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8443"))
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("amer", admin_menu))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_command_handler))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(audio|video|cancel)\|"))
+    app.add_handler(CallbackQueryHandler(admin_actions, pattern=r"^admin\|"))
+    app.add_handler(MessageHandler(filters.ALL, handle_broadcast))
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+    app.run_polling()
