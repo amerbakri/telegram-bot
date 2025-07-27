@@ -5,11 +5,11 @@ import re
 import openai
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated,
-    ReplyKeyboardMarkup
+    InputMediaPhoto, InputMediaVideo
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, CallbackQueryHandler, filters, ChatMemberHandler
+    ContextTypes, CallbackQueryHandler, filters
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -27,18 +27,7 @@ if not BOT_TOKEN or not OPENAI_API_KEY:
 openai.api_key = OPENAI_API_KEY
 url_store = {}
 
-def is_valid_url(text):
-    pattern = re.compile(
-        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
-    )
-    return bool(pattern.match(text))
-
-quality_map = {
-    "720": "best[height<=720][ext=mp4]",
-    "480": "best[height<=480][ext=mp4]",
-    "360": "best[height<=360][ext=mp4]",
-}
-
+# تأكد من أن المستخدم مسجل
 def store_user(user_id):
     try:
         if not os.path.exists(USERS_FILE):
@@ -52,32 +41,28 @@ def store_user(user_id):
     except Exception as e:
         logging.error(f"خطأ بتخزين المستخدم: {e}")
 
+def is_valid_url(text):
+    pattern = re.compile(
+        r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
+    )
+    return bool(pattern.match(text))
+
+quality_map = {
+    "720": "best[height<=720][ext=mp4]",
+    "480": "best[height<=480][ext=mp4]",
+    "360": "best[height<=360][ext=mp4]",
+}
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     store_user(user_id)
-    await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
-    )
+    await update.message.reply_text("👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥")
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
     user_id = update.message.from_user.id
     store_user(user_id)
-
-    if user_id == ADMIN_ID and context.user_data.get("waiting_for_announcement"):
-        announcement = update.message.text
-        context.user_data["waiting_for_announcement"] = False
-
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ تأكيد الإرسال", callback_data=f"confirm_announce|{announcement}"),
-                InlineKeyboardButton("❌ إلغاء", callback_data="admin_back")
-            ]
-        ]
-        await update.message.reply_text(
-            f"📢 إعلان:\n\n{announcement}\n\nهل تريد المتابعة؟",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
 
     text = update.message.text.strip()
 
@@ -111,7 +96,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    await update.message.reply_text("📅 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -135,13 +120,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
+    filename = None
     if action == "audio":
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
         filename = "audio.mp3"
     else:
         format_code = quality_map.get(quality, "best")
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", format_code, "-o", "video.%(ext)s", url]
-        filename = None
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -210,7 +195,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             count = 0
             recent = "لا يوجد"
         await query.edit_message_text(
-            f"👥 عدد المستخدمين: {count}\n\n👵️ آخر 5 مستخدمين:\n{recent}",
+            f"👥 عدد المستخدمين: {count}\n\n🕵️ آخر 5 مستخدمين:\n{recent}",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
             ])
@@ -218,7 +203,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif data == "admin_announce":
         context.user_data["waiting_for_announcement"] = True
-        await query.edit_message_text("📝 أرسل الآن نص الإعلان الذي تريد إرساله لجميع المستخدمين.\n\n📌 يمكنك إرسال النص مباشرة.")
+        context.user_data["media"] = None
+        await query.edit_message_text("📝 أرسل الآن نص أو صورة أو فيديو للإعلان:")
 
     elif data == "admin_back":
         await admin_panel(update, context)
@@ -226,28 +212,61 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "admin_close":
         await query.edit_message_text("✅ تم إغلاق لوحة التحكم.")
 
+async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+
+    if context.user_data.get("waiting_for_announcement"):
+        media = None
+        if update.message.photo:
+            media = update.message.photo[-1].file_id
+            context.user_data["media"] = ("photo", media)
+        elif update.message.video:
+            media = update.message.video.file_id
+            context.user_data["media"] = ("video", media)
+
+        announcement = update.message.caption or update.message.text or ""
+        context.user_data["announcement_text"] = announcement
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ تأكيد الإرسال", callback_data="confirm_announce"),
+                InlineKeyboardButton("❌ إلغاء", callback_data="admin_back")
+            ]
+        ]
+
+        await update.message.reply_text(
+            f"📢 إعلان:\n\n{announcement}\n\nهل تريد المتابعة؟",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 async def confirm_announce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
 
-    if not data.startswith("confirm_announce|"):
-        return
+    announcement = context.user_data.get("announcement_text", "")
+    media_info = context.user_data.get("media")
 
-    announcement = data.split("|", 1)[1]
     try:
         with open(USERS_FILE, "r") as f:
             users = f.read().splitlines()
-        sent_count = 0
+        sent = 0
         for uid in users:
             try:
-                await context.bot.send_message(int(uid), announcement)
-                sent_count += 1
+                if media_info:
+                    if media_info[0] == "photo":
+                        await context.bot.send_photo(chat_id=int(uid), photo=media_info[1], caption=announcement)
+                    elif media_info[0] == "video":
+                        await context.bot.send_video(chat_id=int(uid), video=media_info[1], caption=announcement)
+                else:
+                    await context.bot.send_message(chat_id=int(uid), text=announcement)
+                sent += 1
             except:
                 pass
-        await query.edit_message_text(f"✅ تم إرسال الإعلان إلى {sent_count} مستخدم.")
+        await query.edit_message_text(f"✅ تم إرسال الإعلان إلى {sent} مستخدم.")
     except Exception as e:
-        await query.edit_message_text(f"❌ حدث خطأ أثناء إرسال الإعلان: {e}")
+        await query.edit_message_text(f"❌ حدث خطأ أثناء الإرسال: {e}")
+    context.user_data.clear()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
@@ -257,10 +276,11 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+    app.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO, admin_command_handler))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(audio|video|cancel)"))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
-    app.add_handler(CallbackQueryHandler(confirm_announce_callback, pattern="^confirm_announce\\|"))
+    app.add_handler(CallbackQueryHandler(confirm_announce_callback, pattern="^confirm_announce"))
 
     app.run_webhook(
         listen="0.0.0.0",
