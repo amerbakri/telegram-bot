@@ -13,6 +13,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, CallbackQueryHandler, filters
 )
+from asyncio import create_task, sleep
 
 logging.basicConfig(level=logging.INFO)
 
@@ -24,7 +25,7 @@ ADMIN_ID = 337597459
 USERS_FILE = "users.txt"
 STATS_FILE = "stats.json"
 USAGE_FILE = "usage.json"
-PAID_USERS_FILE = "paid_users.txt"
+PAID_USERS_FILE = "paid_users.json"
 PENDING_SUBS_FILE = "pending_subs.json"
 
 MAX_VIDEO_DOWNLOADS_FREE = 3
@@ -50,22 +51,28 @@ def save_json(file_path, data):
     with open(file_path, "w") as f:
         json.dump(data, f)
 
-# --- مشتركين مدفوعين ---
+# --- اشتراك مدفوع ---
 def load_paid_users():
-    return set(open(PAID_USERS_FILE).read().splitlines()) if os.path.exists(PAID_USERS_FILE) else set()
+    return load_json(PAID_USERS_FILE)
 
 def save_paid_user(user_id):
-    with open(PAID_USERS_FILE, "a") as f:
-        f.write(f"{user_id}\n")
+    users = load_paid_users()
+    expiry_date = (datetime.datetime.utcnow() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+    users[str(user_id)] = expiry_date
+    save_json(PAID_USERS_FILE, users)
 
 def remove_paid_user(user_id):
     users = load_paid_users()
-    users.discard(str(user_id))
-    with open(PAID_USERS_FILE, "w") as f:
-        f.write("\n".join(users))
+    users.pop(str(user_id), None)
+    save_json(PAID_USERS_FILE, users)
 
 def is_paid_user(user_id):
-    return str(user_id) in load_paid_users()
+    users = load_paid_users()
+    expiry_str = users.get(str(user_id))
+    if not expiry_str:
+        return False
+    expiry = datetime.datetime.strptime(expiry_str, "%Y-%m-%d")
+    return datetime.datetime.utcnow() < expiry
 
 # --- حفظ المستخدمين ---
 def save_user(user_id):
@@ -135,7 +142,7 @@ async def handle_admin_payment_decision(update: Update, context: ContextTypes.DE
 
     if decision == "confirm_payment":
         save_paid_user(uid)
-        await context.bot.send_message(chat_id=uid, text="✅ تم تأكيد اشتراكك. شكراً لك!")
+        await context.bot.send_message(chat_id=uid, text="✅ تم تأكيد اشتراكك. شكراً لك! الاشتراك صالح لمدة 30 يومًا.")
         await query.edit_message_caption(query.message.caption + "\n✅ تم التأكيد.")
     elif decision == "reject_payment":
         await context.bot.send_message(chat_id=uid, text="❌ تم رفض صورة التحويل. الرجاء التأكد والمحاولة مجددًا.")
@@ -190,17 +197,81 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
+# --- تحميل الفيديو ---
+async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_paid_user(user_id):
+        await update.message.reply_text("🚫 هذه الميزة متاحة فقط للمشتركين المدفوعين.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("❗️استخدم الأمر بهذا الشكل:\n/download [رابط يوتيوب]")
+        return
+
+    url = context.args[0]
+    await update.message.reply_text("⏬ يتم تحميل الفيديو، يرجى الانتظار...")
+
+    try:
+        output_file = f"video_{user_id}.mp4"
+        cmd = [
+            "yt-dlp",
+            "-f", "best[ext=mp4]",
+            "-o", output_file,
+            url
+        ]
+        subprocess.run(cmd, check=True)
+
+        await update.message.reply_video(video=InputFile(output_file))
+        os.remove(output_file)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ حدث خطأ أثناء تحميل الفيديو:\n{e}")
+
+# --- مهمة دورية لفحص الاشتراكات ---
+async def check_expired_subscriptions(app):
+    while True:
+        users = load_paid_users()
+        now = datetime.datetime.utcnow()
+        for uid, expiry in list(users.items()):
+            expiry_date = datetime.datetime.strptime(expiry, "%Y-%m-%d")
+            if now >= expiry_date:
+                remove_paid_user(uid)
+                try:
+                    await app.bot.send_message(chat_id=int(uid), text="❌ انتهى اشتراكك. يمكنك التجديد بالضغط على زر الاشتراك.")
+                except:
+                    pass
+            elif (expiry_date - now).days == 1:
+                try:
+                    await app.bot.send_message(chat_id=int(uid), text="⚠️ تذكير: تبقى يوم واحد على انتهاء اشتراكك.")
+                except:
+                    pass
+        await sleep(86400)
+
 # --- إضافة إلى التطبيق ---
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("download", download_video))
     app.add_handler(CallbackQueryHandler(handle_subscribe_request, pattern="^subscribe_request$"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_payment_photo))
-    app.add_handler(CallbackQueryHandler(handle_admin_payment_decision, pattern="^(confirm_payment|reject_payment)\|"))
+    app.add_handler(CallbackQueryHandler(handle_admin_payment_decision, pattern="^(confirm_payment|reject_payment)\\|"))
     app.add_handler(CommandHandler("list_subscribers", list_subscribers))
-    app.add_handler(CallbackQueryHandler(remove_subscriber, pattern="^remove_subscriber\|"))
+    app.add_handler(CallbackQueryHandler(remove_subscriber, pattern="^remove_subscriber\\|"))
     app.add_handler(CallbackQueryHandler(list_subscribers, pattern="^show_subscribers$"))
 
-    app.run_polling()
+    create_task(check_expired_subscriptions(app))
+
+    import socket
+    PORT = int(os.environ.get("PORT", 8443))
+    HOSTNAME = os.environ.get("HOSTNAME")  # مثل: telegram-bot.onrender.com
+    if HOSTNAME:
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=BOT_TOKEN,
+            webhook_url=f"https://{HOSTNAME}/{BOT_TOKEN}"
+        )
+    else:
+        app.run_polling()
