@@ -2,7 +2,6 @@ import os
 import subprocess
 import logging
 import re
-import json
 import openai
 
 from telegram import (
@@ -18,29 +17,13 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
-# CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@gsm4x")  # مش مستخدم لأننا ألغينا الاشتراك الإجباري
+# تم حذف الاشتراك الإجباري فلا حاجة لCHANNEL_USERNAME
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
+    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
-
-USERS_FILE = "users.json"
-ADMIN_ID = 337597459
-
-def load_users():
-    if not os.path.exists(USERS_FILE):
-        return []
-    with open(USERS_FILE, "r") as f:
-        return json.load(f)
-
-def save_user(user_id):
-    users = load_users()
-    if user_id not in users:
-        users.append(user_id)
-        with open(USERS_FILE, "w") as f:
-            json.dump(users, f)
 
 def is_valid_url(text):
     pattern = re.compile(
@@ -76,12 +59,19 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    user_id = update.message.from_user.id
-    save_user(user_id)  # تسجيل المستخدم بدون تحقق اشتراك
-
     text = update.message.text.strip()
 
-    if not is_valid_url(text):
+    # حذف رسالة المستخدم لو الرابط صحيح
+    if is_valid_url(text):
+        try:
+            await update.message.delete()
+        except Exception as e:
+            logging.warning(f"فشل حذف رسالة المستخدم: {e}")
+    else:
+        # الردود الذكية بدون حذف رسالة المستخدم
+        if re.search(r"(السلام|مرحبا|أهلا|هلا|الو)", text, re.IGNORECASE):
+            await update.message.reply_text("👋 وعليكم السلام ورحمة الله! كيف أقدر أساعدك؟")
+            return
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -106,7 +96,11 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
 
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📥 اختر نوع التنزيل:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -128,7 +122,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير صالح أو منتهي.")
         return
 
-    await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
+    # إرسال رسالة مؤقتة "جاري التحميل"
+    loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
     if action == "audio":
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
@@ -146,6 +141,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             capture_output=True, text=True
         )
         if fallback.returncode != 0:
+            await loading_msg.delete()
             await query.message.reply_text("🚫 فشل في تحميل الفيديو.")
             return
 
@@ -163,50 +159,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_video(f)
         os.remove(filename)
     else:
+        await loading_msg.delete()
         await query.message.reply_text("🚫 لم يتم العثور على الملف.")
+        url_store.pop(key, None)
+        return
 
     url_store.pop(key, None)
-
-# أوامر المشرف
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("🚫 هذا الأمر للمشرف فقط.")
-        return
-    await update.message.reply_text("📣 أرسل لي نص أو صورة أو فيديو للإرسال لجميع المستخدمين.")
-    context.user_data["broadcast_mode"] = True
-
-async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("broadcast_mode"):
-        return
-    context.user_data["broadcast_mode"] = False
-    users = load_users()
-    msg = update.message
-
-    success = 0
-    failed = 0
-
-    for uid in users:
-        try:
-            if msg.text:
-                await context.bot.send_message(chat_id=uid, text=msg.text)
-            elif msg.photo:
-                await context.bot.send_photo(chat_id=uid, photo=msg.photo[-1].file_id, caption=msg.caption)
-            elif msg.video:
-                await context.bot.send_video(chat_id=uid, video=msg.video.file_id, caption=msg.caption)
-            success += 1
-        except Exception as e:
-            failed += 1
-            print(f"Failed to send to {uid}: {e}")
-
-    await update.message.reply_text(f"✅ تم الإرسال لـ {success} مستخدم. فشل الإرسال لـ {failed} مستخدم.")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("🚫 هذا الأمر للمشرف فقط.")
-        return
-    users = load_users()
-    await update.message.reply_text(f"👥 عدد المستخدمين المسجلين: {len(users)}")
+    # حذف رسالة "جاري التحميل" بعد الإرسال
+    await loading_msg.delete()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
@@ -218,10 +178,6 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
-
-    app.add_handler(CommandHandler("broadcast", broadcast))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(MessageHandler(filters.ALL & filters.User(ADMIN_ID), handle_broadcast))
 
     app.run_webhook(
         listen="0.0.0.0",
