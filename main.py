@@ -26,7 +26,6 @@ STATS_FILE = "stats.json"
 USAGE_FILE = "usage.json"
 PAID_USERS_FILE = "paid_users.txt"
 
-# حدود الاستخدام للمجانيين
 MAX_VIDEO_DOWNLOADS_FREE = 3
 MAX_AI_REQUESTS_FREE = 5
 
@@ -157,7 +156,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
-    # تحقق الاشتراك أو الحد اليومي
     if not is_paid_user(user.id):
         allowed = increment_usage(user.id, "video")
         if not allowed:
@@ -176,7 +174,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if not is_valid_url(text):
-        # AI usage limit check
         if not is_paid_user(user.id):
             allowed = increment_usage(user.id, "ai")
             if not allowed:
@@ -222,14 +219,34 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
+# === التعديل لإرسال رسالة طلب اشتراك للأدمن ===
 async def subscribe_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(
-        "للاشتراك، يرجى إرسال 2 دينار على الرقم:\n"
-        "📲 0781200500 (أورنج كاش)\n"
-        "بعد الدفع، أرسل لي آيدي المستخدم لتفعيل الاشتراك المدفوع."
-    )
+
+    user = query.from_user
+    admin_keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"admin_confirm_subscribe|{user.id}"),
+            InlineKeyboardButton("❌ إلغاء الاشتراك", callback_data=f"admin_cancel_subscribe|{user.id}")
+        ]
+    ])
+
+    try:
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"📥 طلب اشتراك جديد من:\n"
+            f"الاسم: {user.full_name}\n"
+            f"المعرف: @{user.username or 'لا يوجد'}\n"
+            f"آيدي المستخدم: {user.id}\n\n"
+            f"اختر تأكيد أو إلغاء الاشتراك:",
+            reply_markup=admin_keyboard
+        )
+        await query.edit_message_text(
+            "تم إرسال طلب الاشتراك إلى الأدمن، سيتم التواصل معك عند الموافقة."
+        )
+    except Exception as e:
+        await query.edit_message_text(f"❌ خطأ في إرسال الطلب للأدمن: {e}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -442,36 +459,56 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_video(uid, message.video.file_id, caption=message.caption or "")
                 elif message.text:
                     await context.bot.send_message(uid, message.text)
-                else:
-                    # يمكن إضافة دعم أنواع أخرى إذا لزم الأمر
-                    pass
                 sent += 1
             except:
                 pass
-        await query.edit_message_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+        await query.edit_message_text(f"✅ تم إرسال الإعلان لـ {sent} مستخدمًا.")
     except Exception as e:
-        await query.edit_message_text(f"🚫 خطأ أثناء الإرسال: {e}")
+        await query.edit_message_text(f"⚠️ خطأ في الإرسال: {e}")
 
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8443"))
-    hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
+# === إضافة معالج تأكيد/إلغاء الاشتراك من الأدمن ===
+async def admin_subscription_response_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("🚫 هذا الزر مخصص للأدمن فقط.", show_alert=True)
+        return
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CommandHandler("addpaid", lambda u,c: add_paid_user(u, c)))  # غير مستخدم مباشرة، نستعمل لوحة التحكم
+    data = query.data
+    action, user_id_str = data.split("|")
+    user_id = int(user_id_str)
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)"))
-    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
-    app.add_handler(CallbackQueryHandler(confirm_broadcast, pattern="^confirm_broadcast$"))
-    app.add_handler(CallbackQueryHandler(subscribe_request_handler, pattern="^subscribe_request_user$"))
-    app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
+    if action == "admin_confirm_subscribe":
+        save_paid_user(user_id_str)
+        await query.edit_message_text(f"✅ تم تفعيل الاشتراك للمستخدم: {user_id_str}")
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+        try:
+            await context.bot.send_message(user_id, "🎉 تم تفعيل اشتراكك المدفوع بنجاح. شكراً لدعمك!")
+        except:
+            pass
+
+    elif action == "admin_cancel_subscribe":
+        await query.edit_message_text(f"❌ تم رفض طلب الاشتراك للمستخدم: {user_id_str}")
+
+        try:
+            await context.bot.send_message(user_id, "❌ تم رفض طلب اشتراكك المدفوع. يمكنك المحاولة لاحقًا.")
+        except:
+            pass
+
+# === تسجيل المعالجات ===
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+app.add_handler(CallbackQueryHandler(subscribe_request_handler, pattern="^subscribe_request_user$"))
+app.add_handler(CallbackQueryHandler(admin_subscription_response_handler, pattern="^admin_(confirm|cancel)_subscribe\|"))
+app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
+app.add_handler(CommandHandler("admin", admin_panel))
+app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
+app.add_handler(MessageHandler(filters.ALL, media_handler))
+app.add_handler(CallbackQueryHandler(confirm_broadcast, pattern="^confirm_broadcast$"))
+
+print("✅ البوت يعمل الآن!")
+app.run_polling()
