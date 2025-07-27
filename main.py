@@ -526,9 +526,20 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(remove_subscriber, pattern="^remove_subscriber\|"))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
 
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+hostname = "telegram-bot-fyro.onrender.com"
+port = int(os.getenv("PORT", "8443"))
+
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# إضافة الـ handlers ...
+
+app.run_webhook(
+    listen="0.0.0.0",
+    port=port,
+    url_path=BOT_TOKEN,
+    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+)
+
