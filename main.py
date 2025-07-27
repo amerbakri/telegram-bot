@@ -1,3 +1,7 @@
+# main.py
+# كود بوت تيليجرام لتحميل الفيديوهات من يوتيوب وتيك توك وإنستغرام وفيسبوك
+# يدعم الاشتراك الإجباري والرد الذكي عبر OpenAI
+
 import os
 import subprocess
 import logging
@@ -17,10 +21,10 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
-# تم حذف الاشتراك الإجباري فلا حاجة لCHANNEL_USERNAME
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@gsm4x")
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
+    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
@@ -37,11 +41,20 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
+async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return member.status not in ("left", "kicked")
+    except Exception as e:
+        logging.warning(f"فشل التحقق من الاشتراك: {e}")
+        return False
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
+        "👋 أهلاً! أرسل رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
     )
 
+# ترحيب بالأعضاء الجدد
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member: ChatMemberUpdated = update.chat_member
     if member.new_chat_member.status == "member":
@@ -59,19 +72,17 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
+    user_id = update.message.from_user.id
+    if not await check_subscription(user_id, context):
+        button = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
+        ])
+        await update.message.reply_text("⚠️ يجب الاشتراك في القناة:", reply_markup=button)
+        return
+
     text = update.message.text.strip()
 
-    # حذف رسالة المستخدم لو الرابط صحيح
-    if is_valid_url(text):
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logging.warning(f"فشل حذف رسالة المستخدم: {e}")
-    else:
-        # الردود الذكية بدون حذف رسالة المستخدم
-        if re.search(r"(السلام|مرحبا|أهلا|هلا|الو)", text, re.IGNORECASE):
-            await update.message.reply_text("👋 وعليكم السلام ورحمة الله! كيف أقدر أساعدك؟")
-            return
+    if not is_valid_url(text):
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -96,11 +107,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
 
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="📥 اختر نوع التنزيل:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -122,8 +129,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير صالح أو منتهي.")
         return
 
-    # إرسال رسالة مؤقتة "جاري التحميل"
-    loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
+    await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
     if action == "audio":
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
@@ -141,7 +147,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             capture_output=True, text=True
         )
         if fallback.returncode != 0:
-            await loading_msg.delete()
             await query.message.reply_text("🚫 فشل في تحميل الفيديو.")
             return
 
@@ -159,14 +164,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_video(f)
         os.remove(filename)
     else:
-        await loading_msg.delete()
         await query.message.reply_text("🚫 لم يتم العثور على الملف.")
-        url_store.pop(key, None)
-        return
 
     url_store.pop(key, None)
-    # حذف رسالة "جاري التحميل" بعد الإرسال
-    await loading_msg.delete()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
