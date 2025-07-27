@@ -3,9 +3,9 @@ import subprocess
 import logging
 import re
 import openai
-
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatMemberUpdated,
+    ReplyKeyboardMarkup
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -17,10 +17,12 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
-# تم حذف الاشتراك الإجباري فلا حاجة لCHANNEL_USERNAME
+
+ADMIN_ID = 337597459
+USERS_FILE = "users.txt"
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في إعدادات البيئة.")
+    raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
@@ -37,41 +39,36 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
+# تخزين معرف المستخدم في ملف إذا جديد
+def store_user(user_id):
+    try:
+        if not os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "w") as f:
+                pass
+        with open(USERS_FILE, "r") as f:
+            users = f.read().splitlines()
+        if str(user_id) not in users:
+            with open(USERS_FILE, "a") as f:
+                f.write(f"{user_id}\n")
+    except Exception as e:
+        logging.error(f"خطأ بتخزين المستخدم: {e}")
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    store_user(user_id)
     await update.message.reply_text(
         "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
     )
 
-async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    member: ChatMemberUpdated = update.chat_member
-    if member.new_chat_member.status == "member":
-        user = member.new_chat_member.user
-        await context.bot.send_message(
-            chat_id=update.chat_member.chat.id,
-            text=(
-                f"👋 مرحباً {user.first_name}!\n"
-                "🛠️ صيانة واستشارات ولا أحلى!\n"
-                "📥 أرسل رابط لتحميل الفيديو أو اسأل أي سؤال عن الصيانة."
-            )
-        )
-
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+    user_id = update.message.from_user.id
+    store_user(user_id)
 
     text = update.message.text.strip()
 
-    # حذف رسالة المستخدم لو الرابط صحيح
-    if is_valid_url(text):
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logging.warning(f"فشل حذف رسالة المستخدم: {e}")
-    else:
-        # الردود الذكية بدون حذف رسالة المستخدم
-        if re.search(r"(السلام|مرحبا|أهلا|هلا|الو)", text, re.IGNORECASE):
-            await update.message.reply_text("👋 وعليكم السلام ورحمة الله! كيف أقدر أساعدك؟")
-            return
+    if not is_valid_url(text):
         try:
             response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
@@ -96,11 +93,13 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
 
-    await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="📥 اختر نوع التنزيل:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    # حذف رسالة الرابط بعد إظهار الأزرار
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -122,7 +121,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("⚠️ الرابط غير صالح أو منتهي.")
         return
 
-    # إرسال رسالة مؤقتة "جاري التحميل"
     loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
 
     if action == "audio":
@@ -141,8 +139,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             capture_output=True, text=True
         )
         if fallback.returncode != 0:
-            await loading_msg.delete()
-            await query.message.reply_text("🚫 فشل في تحميل الفيديو.")
+            await query.edit_message_text("🚫 فشل في تحميل الفيديو.")
+            url_store.pop(key, None)
             return
 
     if action == "video":
@@ -159,14 +157,66 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.reply_video(f)
         os.remove(filename)
     else:
-        await loading_msg.delete()
         await query.message.reply_text("🚫 لم يتم العثور على الملف.")
-        url_store.pop(key, None)
-        return
 
     url_store.pop(key, None)
-    # حذف رسالة "جاري التحميل" بعد الإرسال
-    await loading_msg.delete()
+
+    # حذف رسالة "جاري التحميل" بعد الانتهاء
+    try:
+        await loading_msg.delete()
+    except:
+        pass
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
+        return
+
+    keyboard = [
+        ["👥 عدد المستخدمين", "📢 إرسال إعلان"],
+        ["❌ إغلاق"]
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("اختر أمر:", reply_markup=reply_markup)
+
+async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    if user_id != ADMIN_ID:
+        return
+
+    text = update.message.text
+
+    if text == "👥 عدد المستخدمين":
+        try:
+            with open(USERS_FILE, "r") as f:
+                users = f.read().splitlines()
+            count = len(users)
+        except:
+            count = 0
+        await update.message.reply_text(f"عدد المستخدمين المسجلين: {count}")
+    elif text == "📢 إرسال إعلان":
+        await update.message.reply_text("أرسل لي نص الإعلان الذي تريد إرساله للمستخدمين.")
+        context.user_data["waiting_for_announcement"] = True
+    elif text == "❌ إغلاق":
+        await update.message.reply_text("تم إغلاق لوحة تحكم الأدمن.", reply_markup=None)
+    else:
+        if context.user_data.get("waiting_for_announcement"):
+            announcement = text
+            try:
+                with open(USERS_FILE, "r") as f:
+                    users = f.read().splitlines()
+                sent_count = 0
+                for uid in users:
+                    try:
+                        await context.bot.send_message(int(uid), announcement)
+                        sent_count += 1
+                    except:
+                        pass
+                await update.message.reply_text(f"تم إرسال الإعلان إلى {sent_count} مستخدم.")
+            except Exception as e:
+                await update.message.reply_text(f"حدث خطأ أثناء إرسال الإعلان: {e}")
+            context.user_data["waiting_for_announcement"] = False
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
@@ -175,9 +225,10 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_command_handler))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
 
     app.run_webhook(
         listen="0.0.0.0",
