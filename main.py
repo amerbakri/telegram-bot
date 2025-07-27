@@ -169,9 +169,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url_store.pop(key, None)
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-    load_dotenv()
-
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
 
