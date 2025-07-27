@@ -7,7 +7,7 @@ import openai
 from datetime import datetime
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove, InputMediaPhoto, InputMediaVideo
 )
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -161,7 +161,17 @@ async def cancel_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.callback_query.answer("❌ تم إلغاء الطلب.")
     await update.callback_query.edit_message_text("🚫 تم إلغاء الاشتراك.")
 
-# لإضافة الهاندلرز الجدد في التطبيق:
-# app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
-# app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
-# app.add_handler(CallbackQueryHandler(cancel_subscription, pattern="^cancel_sub$"))
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    stats = load_stats()
+    msg = (
+        f"📊 <b>إحصائيات الاستخدام:</b>\n"
+        f"- إجمالي التنزيلات: {stats['total_downloads']}\n"
+        f"- 720p: {stats['quality_counts']['720']}\n"
+        f"- 480p: {stats['quality_counts']['480']}\n"
+        f"- 360p: {stats['quality_counts']['360']}\n"
+        f"- صوت فقط: {stats['quality_counts']['audio']}\n"
+        f"- الأكثر طلبًا: {stats['most_requested_quality']}"
+    )
+    await update.message.reply_text(msg, parse_mode="HTML")
