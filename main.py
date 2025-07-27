@@ -39,7 +39,6 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
-# تخزين معرف المستخدم في ملف إذا جديد
 def store_user(user_id):
     try:
         if not os.path.exists(USERS_FILE):
@@ -60,11 +59,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
     )
 
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
-        return
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     store_user(user_id)
+
+    if user_id == ADMIN_ID and context.user_data.get("waiting_for_announcement"):
+        announcement = update.message.text
+        context.user_data["waiting_for_announcement"] = False
+
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ تأكيد الإرسال", callback_data=f"confirm_announce|{announcement}"),
+                InlineKeyboardButton("❌ إلغاء", callback_data="admin_back")
+            ]
+        ]
+        await update.message.reply_text(
+            f"📢 إعلان:\n\n{announcement}\n\nهل تريد المتابعة؟",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
 
     text = update.message.text.strip()
 
@@ -93,13 +106,12 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
     ]
 
-    # حذف رسالة الرابط بعد إظهار الأزرار
     try:
         await update.message.delete()
     except:
         pass
 
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("📅 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -161,7 +173,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url_store.pop(key, None)
 
-    # حذف رسالة "جاري التحميل" بعد الانتهاء
     try:
         await loading_msg.delete()
     except:
@@ -174,49 +185,69 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        ["👥 عدد المستخدمين", "📢 إرسال إعلان"],
-        ["❌ إغلاق"]
+        [InlineKeyboardButton("👥 عرض عدد المستخدمين", callback_data="admin_users")],
+        [InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_announce")],
+        [InlineKeyboardButton("❌ إغلاق", callback_data="admin_close")]
     ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("اختر أمر:", reply_markup=reply_markup)
+    await update.message.reply_text("🎛️ لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    if user_id != ADMIN_ID:
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+
+    if query.from_user.id != ADMIN_ID:
+        await query.message.edit_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
         return
 
-    text = update.message.text
-
-    if text == "👥 عدد المستخدمين":
+    if data == "admin_users":
         try:
             with open(USERS_FILE, "r") as f:
                 users = f.read().splitlines()
             count = len(users)
+            recent = "\n".join(users[-5:]) if users else "لا يوجد"
         except:
             count = 0
-        await update.message.reply_text(f"عدد المستخدمين المسجلين: {count}")
-    elif text == "📢 إرسال إعلان":
-        await update.message.reply_text("أرسل لي نص الإعلان الذي تريد إرساله للمستخدمين.")
+            recent = "لا يوجد"
+        await query.edit_message_text(
+            f"👥 عدد المستخدمين: {count}\n\n👵️ آخر 5 مستخدمين:\n{recent}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
+            ])
+        )
+
+    elif data == "admin_announce":
         context.user_data["waiting_for_announcement"] = True
-    elif text == "❌ إغلاق":
-        await update.message.reply_text("تم إغلاق لوحة تحكم الأدمن.", reply_markup=None)
-    else:
-        if context.user_data.get("waiting_for_announcement"):
-            announcement = text
+        await query.edit_message_text("📝 أرسل الآن نص الإعلان الذي تريد إرساله لجميع المستخدمين.\n\n📌 يمكنك إرسال النص مباشرة.")
+
+    elif data == "admin_back":
+        await admin_panel(update, context)
+
+    elif data == "admin_close":
+        await query.edit_message_text("✅ تم إغلاق لوحة التحكم.")
+
+async def confirm_announce_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if not data.startswith("confirm_announce|"):
+        return
+
+    announcement = data.split("|", 1)[1]
+    try:
+        with open(USERS_FILE, "r") as f:
+            users = f.read().splitlines()
+        sent_count = 0
+        for uid in users:
             try:
-                with open(USERS_FILE, "r") as f:
-                    users = f.read().splitlines()
-                sent_count = 0
-                for uid in users:
-                    try:
-                        await context.bot.send_message(int(uid), announcement)
-                        sent_count += 1
-                    except:
-                        pass
-                await update.message.reply_text(f"تم إرسال الإعلان إلى {sent_count} مستخدم.")
-            except Exception as e:
-                await update.message.reply_text(f"حدث خطأ أثناء إرسال الإعلان: {e}")
-            context.user_data["waiting_for_announcement"] = False
+                await context.bot.send_message(int(uid), announcement)
+                sent_count += 1
+            except:
+                pass
+        await query.edit_message_text(f"✅ تم إرسال الإعلان إلى {sent_count} مستخدم.")
+    except Exception as e:
+        await query.edit_message_text(f"❌ حدث خطأ أثناء إرسال الإعلان: {e}")
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
@@ -226,9 +257,10 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, admin_command_handler))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^(audio|video|cancel)"))
+    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(confirm_announce_callback, pattern="^confirm_announce\\|"))
 
     app.run_webhook(
         listen="0.0.0.0",
