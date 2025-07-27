@@ -342,8 +342,7 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)"))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(confirm_broadcast, pattern="^confirm_broadcast$"))
-    app.add_handler(MessageHandler(filters.ALL & filters.USER(user_id=ADMIN_ID), media_handler))
-
+    app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
