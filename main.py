@@ -1,11 +1,8 @@
-# main.py
-# كود بوت تيليجرام لتحميل الفيديوهات من يوتيوب وتيك توك وإنستغرام وفيسبوك
-# يدعم الاشتراك الإجباري والرد الذكي عبر OpenAI
-
 import os
 import subprocess
 import logging
 import re
+import json
 import openai
 
 from telegram import (
@@ -21,13 +18,29 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@gsm4x")
+# CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@gsm4x")  # مش مستخدم لأننا ألغينا الاشتراك الإجباري
 
 if not BOT_TOKEN or not OPENAI_API_KEY:
     raise RuntimeError("❌ تأكد من تعيين BOT_TOKEN و OPENAI_API_KEY في .env")
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
+
+USERS_FILE = "users.json"
+ADMIN_ID = 6507290608
+
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        return []
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_user(user_id):
+    users = load_users()
+    if user_id not in users:
+        users.append(user_id)
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f)
 
 def is_valid_url(text):
     pattern = re.compile(
@@ -41,20 +54,11 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
-async def check_subscription(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    try:
-        member = await context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status not in ("left", "kicked")
-    except Exception as e:
-        logging.warning(f"فشل التحقق من الاشتراك: {e}")
-        return False
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 أهلاً! أرسل رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
+        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥"
     )
 
-# ترحيب بالأعضاء الجدد
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member: ChatMemberUpdated = update.chat_member
     if member.new_chat_member.status == "member":
@@ -73,12 +77,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user_id = update.message.from_user.id
-    if not await check_subscription(user_id, context):
-        button = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 اشترك الآن", url=f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}")]
-        ])
-        await update.message.reply_text("⚠️ يجب الاشتراك في القناة:", reply_markup=button)
-        return
+    save_user(user_id)  # تسجيل المستخدم بدون تحقق اشتراك
 
     text = update.message.text.strip()
 
@@ -168,6 +167,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     url_store.pop(key, None)
 
+# أوامر المشرف
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 هذا الأمر للمشرف فقط.")
+        return
+    await update.message.reply_text("📣 أرسل لي نص أو صورة أو فيديو للإرسال لجميع المستخدمين.")
+    context.user_data["broadcast_mode"] = True
+
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("broadcast_mode"):
+        return
+    context.user_data["broadcast_mode"] = False
+    users = load_users()
+    msg = update.message
+
+    success = 0
+    failed = 0
+
+    for uid in users:
+        try:
+            if msg.text:
+                await context.bot.send_message(chat_id=uid, text=msg.text)
+            elif msg.photo:
+                await context.bot.send_photo(chat_id=uid, photo=msg.photo[-1].file_id, caption=msg.caption)
+            elif msg.video:
+                await context.bot.send_video(chat_id=uid, video=msg.video.file_id, caption=msg.caption)
+            success += 1
+        except Exception as e:
+            failed += 1
+            print(f"Failed to send to {uid}: {e}")
+
+    await update.message.reply_text(f"✅ تم الإرسال لـ {success} مستخدم. فشل الإرسال لـ {failed} مستخدم.")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("🚫 هذا الأمر للمشرف فقط.")
+        return
+    users = load_users()
+    await update.message.reply_text(f"👥 عدد المستخدمين المسجلين: {len(users)}")
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
@@ -178,6 +218,10 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(ChatMemberHandler(welcome_new_member, ChatMemberHandler.CHAT_MEMBER))
+
+    app.add_handler(CommandHandler("broadcast", broadcast))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(MessageHandler(filters.ALL & filters.User(ADMIN_ID), handle_broadcast))
 
     app.run_webhook(
         listen="0.0.0.0",
