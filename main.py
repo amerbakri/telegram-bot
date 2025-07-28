@@ -476,7 +476,7 @@ if __name__ == "__main__":
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("ادمن", admin_panel))
+    application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
     application.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
     application.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
