@@ -121,15 +121,17 @@ async def send_limit_message(update: Update):
 # == استقبال طلب الاشتراك ==
 async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    with open(REQUESTS_FILE, "a", encoding="utf-8") as f:
+    with open(REQUESTS_FILE, "a") as f:
         f.write(f"{user.id}|{user.username or 'NO_USERNAME'}|{datetime.utcnow()}\n")
-    await update.callback_query.edit_message_text(
-        f"💳 <b>للاشتراك:</b>\n"
-        f"أرسل 2 دينار عبر أورنج كاش إلى الرقم:\n<b>📱 <code>{ORANGE_NUMBER}</code></b>\n\n"
-        f"ثم أرسل اسمك ورقمك (اختياري) ليتم تفعيل اشتراكك.",
-        parse_mode="HTML"
+    msg = (
+        f"💳 للاشتراك:\nأرسل 2 دينار عبر أورنج كاش إلى الرقم:\n📱 {ORANGE_NUMBER}\n\n"
+        f"ثم أرسل لقطة شاشة (صورة) من التحويل هنا ليتم تفعيل اشتراكك."
     )
-    await update.callback_query.answer("✅ تم إرسال التعليمات.")
+    if update.callback_query:
+        await update.callback_query.edit_message_text(msg)
+        await update.callback_query.answer("✅ تم إرسال التعليمات.")
+    else:
+        await update.message.reply_text(msg)
 
 # == استقبال بيانات الاشتراك فقط (دون صورة) ==
 async def receive_subscription_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
