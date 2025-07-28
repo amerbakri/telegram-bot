@@ -118,7 +118,7 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.ALL & ~filters.User(user_id=ADMIN_ID), user_message_handler))
     app.add_handler(CallbackQueryHandler(replyto_callback, pattern=r"^replyto\|"))
     app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), admin_message_handler))
-    app.add_handler(CommandHandler("رد", admin_message_handler))
+    app.add_handler(CommandHandler("reply", admin_message_handler))
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     app.run_webhook(
