@@ -99,25 +99,26 @@ async def send_limit_message(update: Update):
         [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
     ])
     await update.message.reply_text(
-        f"🚫 لقد وصلت للحد اليومي المجاني.\n"
-        f"للاستخدام غير محدود، اشترك بـ <b>2 دينار شهريًا</b> عبر أورنج ماني:\n"
+        "🚫 <b>لقد وصلت للحد اليومي المجاني.</b>\n"
+        "للاستخدام غير محدود، اشترك بـ <b>2 دينار شهريًا</b> عبر أورنج ماني:\n"
         f"<b>📲 {ORANGE_NUMBER}</b>\nثم اضغط زر <b>اشترك الآن</b> ليتم تفعيل الاشتراك.",
         reply_markup=keyboard,
         parse_mode="HTML"
     )
 
 # == استقبال طلب الاشتراك ==
-
 async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in user_pending_sub:
         await update.callback_query.answer("✅ تم إرسال طلبك بالفعل! انتظر مراجعة الأدمن.")
         return
     user_pending_sub.add(user.id)
-    user_data = f"<b>طلب اشتراك جديد:</b>\n"
-    user_data += f"الاسم: <b>{user.first_name or ''} {user.last_name or ''}</b>\n"
-    user_data += f"المستخدم: <b>@{user.username or 'NO_USERNAME'}</b>\n"
-    user_data += f"ID: <b>{user.id}</b>"
+    user_data = (
+        "<b>طلب اشتراك جديد:</b>\n"
+        f"الاسم: <b>{user.first_name or ''} {user.last_name or ''}</b>\n"
+        f"المستخدم: <b>@{user.username or 'NO_USERNAME'}</b>\n"
+        f"ID: <b>{user.id}</b>"
+    )
     keyboard = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ تفعيل الاشتراك", callback_data=f"confirm_sub|{user.id}"),
@@ -155,7 +156,6 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.edit_message_text("🚫 تم رفض الاشتراك لهذا المستخدم.", parse_mode="HTML")
 
 # == تحميل الفيديو ==
-
 def update_stats(action, quality):
     stats = load_json(STATS_FILE, {
         "total_downloads": 0,
@@ -173,8 +173,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store_user(user)
     await update.message.reply_text(
         "<b>👋 أهلاً بك في بوت التحميل الذكي!</b>\n"
-        "أرسل رابط فيديو من YouTube / TikTok / Facebook / Instagram لتحميله.\n"
-        "الحد المجاني: <b>3 فيديو</b> و <b>5 استفسارات ذكاء اصطناعي</b> يومياً.\n\n"
+        "أرسل رابط فيديو من <b>YouTube</b> / <b>TikTok</b> / <b>Facebook</b> / <b>Instagram</b> لتحميله مباشرة.\n"
+        "<b>الحد المجاني:</b> 3 فيديو و5 استفسارات AI يومياً.\n\n"
         "<b>للاشتراك المدفوع:</b>\nادفع 2 دينار عبر أورنج ماني: <b>0781200500</b>\nثم اضغط /subscribe",
         parse_mode="HTML"
     )
@@ -275,7 +275,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 # == لوحة تحكم الأدمن ==
-
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
@@ -409,7 +408,6 @@ async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
 # == ربط الهاندلرز ==
-
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("subscribe", lambda u, c: c.bot.send_message(
