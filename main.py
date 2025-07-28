@@ -332,7 +332,11 @@ async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🟢 قائمة المشتركين", callback_data="subs")],
         [InlineKeyboardButton("❌ إغلاق", callback_data="close")]
     ])
-    await (update.message or update.callback_query).reply_text("لوحة تحكم الأدمن:", reply_markup=kb)
+    if update.message:
+        await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=kb)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=kb)
+
 
 async def admin_callbacks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; user = q.from_user
