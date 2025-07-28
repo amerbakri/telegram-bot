@@ -546,7 +546,7 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), download))
 
     # أزرار Inline
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(video|audio|cancel)\|"))
     application.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     application.add_handler(CallbackQueryHandler(confirm_broadcast_handler, pattern="^confirm_broadcast$"))
 
@@ -558,7 +558,15 @@ def main():
     #                         webhook_url=f"https://yourdomain.com/{BOT_TOKEN}")
 
     # للتشغيل العادي poll
-    application.run_polling()
+   import os
+port = int(os.environ.get("PORT", 8443))
+hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+application.run_webhook(
+    listen="0.0.0.0",
+    port=port,
+    url_path=BOT_TOKEN,
+    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+)
 
 if __name__ == "__main__":
     main()
