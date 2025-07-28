@@ -21,6 +21,8 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
 ADMIN_ID = 337597459
 USERS_FILE = "users.txt"
+if not os.path.exists(USERS_FILE):
+    open(USERS_FILE, "w", encoding="utf-8").close()
 STATS_FILE = "stats.json"
 LIMITS_FILE = "limits.json"
 SUBSCRIPTIONS_FILE = "subscriptions.json"
