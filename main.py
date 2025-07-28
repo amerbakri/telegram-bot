@@ -83,8 +83,16 @@ def save_json(path, data):
 def check_limit(uid, kind):
     if is_subscribed(uid) or uid == ADMIN_ID:
         return True
-    data = load_json(USAGE_FILE, {"date": "", "video": {}, "ai": {}})
+    # معالجة الملف إذا كان فارغ أو غير جاهز
+    try:
+        data = load_json(USAGE_FILE, {"date": "", "video": {}, "ai": {}})
+        if not isinstance(data, dict):
+            data = {"date": "", "video": {}, "ai": {}}
+    except:
+        data = {"date": "", "video": {}, "ai": {}}
     today = date.today().isoformat()
+    if "date" not in data or "video" not in data or "ai" not in data:
+        data = {"date": today, "video": {}, "ai": {}}
     if data["date"] != today:
         data = {"date": today, "video": {}, "ai": {}}
     cnt = data[kind].get(str(uid), 0)
@@ -94,6 +102,7 @@ def check_limit(uid, kind):
     data[kind][str(uid)] = cnt + 1
     save_json(USAGE_FILE, data)
     return True
+
 
 def update_stats(kind, quality):
     st = load_json(STATS_FILE, {"total":0,"counts":{"720":0,"480":0,"360":0,"audio":0}})
