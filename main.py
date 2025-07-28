@@ -26,7 +26,6 @@ USERS_FILE = "users.txt"
 USAGE_FILE = "usage.json"
 STATS_FILE = "stats.json"
 SUBS_FILE = "subs.json"
-PROOFS_DIR = "proofs"
 FREE_VIDEO_LIMIT = 3
 FREE_AI_LIMIT = 5
 
@@ -35,7 +34,6 @@ if not BOT_TOKEN or not OPENAI_API_KEY:
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
-user_waiting_proof = set()
 
 quality_map = {
     "720": "best[height<=720][ext=mp4]",
@@ -49,10 +47,9 @@ def ensure_file(path, init="{}"):
 
 for file in [USERS_FILE, USAGE_FILE, STATS_FILE, SUBS_FILE]:
     ensure_file(file, "{}")
-if not os.path.exists(PROOFS_DIR): os.makedirs(PROOFS_DIR)
 
 def store_user(u):
-    entry = f"{u.id}|{u.username or 'NO_USERNAME'}|{u.first_name or ''} {u.last_name or ''}".strip()
+    entry = f"{u.id}|{u.username or 'NO_USERNAME'}|{u.first_name or ''} {u.last_name or ''}|{u.phone_number if hasattr(u,'phone_number') else ''}".strip()
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w", encoding="utf-8").close()
     with open(USERS_FILE, "r+", encoding="utf-8") as f:
@@ -107,7 +104,6 @@ def update_stats(kind, quality):
 def is_valid_url(text):
     return bool(re.match(r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+", text))
 
-# --- رسائل منسقة ---
 def msg_start():
     return (
         "<b>👋 أهلاً بك في بوت التحميل الذكي!</b>\n\n"
@@ -115,7 +111,7 @@ def msg_start():
         "<b>🤖 ذكاء اصطناعي:</b> أرسل أي سؤال وسيتم الرد تلقائياً\n"
         "<b>💰 مجاني يومياً:</b> <u>3 فيديو</u> و<u>5 استفسارات</u>\n"
         f"<b>🔓 للاشتراك المدفوع:</b> أرسل 2 دينار إلى أورنج ماني: <code>{ORANGE_NUMBER}</code>\n"
-        "ثم اضغط /subscribe أو زر الاشتراك وأرسل صورة إثبات الدفع."
+        "ثم اضغط /subscribe أو زر الاشتراك."
     )
 
 def msg_limit(kind):
@@ -123,20 +119,20 @@ def msg_limit(kind):
         return (
             "<b>🚫 وصلت للحد اليومي المجاني للتحميل.</b>\n"
             f"للاستخدام غير محدود، اشترك بـ <b>2 دينار</b> شهرياً عبر أورنج ماني:\n"
-            f"<b>📲 {ORANGE_NUMBER}</b>\nثم أرسل صورة إثبات الدفع بعد الضغط على <b>اشترك الآن</b>."
+            f"<b>📲 {ORANGE_NUMBER}</b>\nثم اضغط <b>اشترك الآن</b> وسيتم إرسال طلبك مباشرة."
         )
     else:
         return (
             "<b>🚫 وصلت للحد اليومي المجاني لاستفسارات الذكاء الاصطناعي.</b>\n"
             f"للاستخدام غير محدود، اشترك بـ <b>2 دينار</b> شهرياً عبر أورنج ماني:\n"
-            f"<b>📲 {ORANGE_NUMBER}</b>\nثم أرسل صورة إثبات الدفع بعد الضغط على <b>اشترك الآن</b>."
+            f"<b>📲 {ORANGE_NUMBER}</b>\nثم اضغط <b>اشترك الآن</b> وسيتم إرسال طلبك مباشرة."
         )
 
 def msg_subscribe():
     return (
         "<b>💳 للاشتراك المدفوع:</b>\n"
         f"أرسل <b>2 دينار</b> على أورنج ماني <b>{ORANGE_NUMBER}</b>\n"
-        "ثم أرسل صورة إثبات التحويل هنا مباشرة بعد الضغط على <b>اشترك الآن</b>."
+        "ثم اضغط على زر <b>اشترك الآن</b> وسيصل طلبك للأدمن فوراً بدون إرسال صورة."
     )
 
 def msg_paid_accepted():
@@ -144,9 +140,6 @@ def msg_paid_accepted():
 
 def msg_paid_rejected():
     return "<b>❌ تم رفض طلب الاشتراك المدفوع.</b>"
-
-def msg_proof_received():
-    return "<b>✅ تم استلام صورة إثبات الدفع. انتظر موافقة الأدمن خلال دقائق.</b>"
 
 def msg_choose_quality():
     return "<b>📥 اختر نوع وجودة التنزيل المطلوبة:</b>"
@@ -158,11 +151,20 @@ def msg_wait_download(q):
     return f"<b>⏳ جاري التحميل{' بجودة ' + q if q!='best' else ''}...</b>"
 
 def msg_confirm_proof(u):
+    # محاولة إيجاد رقم الهاتف من ملف المستخدمين
+    phone = ""
+    with open(USERS_FILE, encoding="utf-8") as f:
+        for line in f:
+            if line.startswith(f"{u.id}|"):
+                parts = line.strip().split("|")
+                phone = parts[3] if len(parts) > 3 else ""
+                break
     return (
-        f"<b>📩 إثبات اشتراك جديد:</b>\n"
+        f"<b>📩 طلب اشتراك جديد:</b>\n"
         f"<b>👤 الاسم:</b> {u.first_name or ''} {u.last_name or ''}\n"
         f"<b>المستخدم:</b> @{u.username or u.id}\n"
-        f"<b>ID:</b> <code>{u.id}</code>"
+        f"<b>ID:</b> <code>{u.id}</code>\n"
+        f"{'<b>📞 الهاتف:</b> ' + phone if phone else ''}"
     )
 
 def msg_paid_removed(uid):
@@ -176,8 +178,6 @@ def msg_stats(st):
         f"720p: <b>{c.get('720',0)}</b> | 480p: <b>{c.get('480',0)}</b> | 360p: <b>{c.get('360',0)}</b> | صوت فقط: <b>{c.get('audio',0)}</b>"
     )
 
-# --- الأوامر الرئيسية ---
-
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     store_user(update.effective_user)
     await update.message.reply_text(
@@ -190,7 +190,7 @@ async def download(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     store_user(user)
 
     if not is_valid_url(text):
-        # ذكاء صناعي AI
+        # ذكاء اصطناعي AI
         if ctx.user_data.get("broadcast"): return
         if not check_limit(user.id, "ai"):
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]])
@@ -231,8 +231,22 @@ async def download(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query.data == "subscribe":
-        user_waiting_proof.add(query.from_user.id)
-        await query.edit_message_text(msg_subscribe(), parse_mode=ParseMode.HTML)
+        # عند الاشتراك يصل إشعار للأدمن فقط (اسم - معرف - آيدي - رقم هاتف)
+        u = query.from_user
+        store_user(u)
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm|{u.id}"),
+                InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject|{u.id}")
+            ]
+        ])
+        await ctx.bot.send_message(
+            ADMIN_ID, msg_confirm_proof(u), reply_markup=kb, parse_mode=ParseMode.HTML
+        )
+        await query.edit_message_text(
+            "✅ تم إرسال طلب الاشتراك. انتظر موافقة الأدمن خلال دقائق.",
+            parse_mode=ParseMode.HTML
+        )
         return
     try:
         action, quality, key = query.data.split("|")
@@ -291,28 +305,6 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try: await loading_msg.delete()
     except: pass
 
-# استقبال صورة الدفع
-async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    if u.id not in user_waiting_proof:
-        await update.message.reply_text("❌ اضغط أولاً على زر <b>اشترك الآن</b> ثم أرسل صورة إثبات الدفع.", parse_mode=ParseMode.HTML)
-        return
-    user_waiting_proof.remove(u.id)
-    if not update.message.photo: return
-    file = await update.message.photo[-1].get_file()
-    path = f"{PROOFS_DIR}/{u.id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
-    await file.download_to_drive(path)
-    kb = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm|{u.id}"),
-            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject|{u.id}")
-        ]
-    ])
-    await ctx.bot.send_photo(
-        ADMIN_ID, photo=open(path,"rb"), caption=msg_confirm_proof(u), reply_markup=kb, parse_mode=ParseMode.HTML
-    )
-    await update.message.reply_text(msg_proof_received(), parse_mode=ParseMode.HTML)
-
 # تأكيد/رفض الاشتراك من الأدمن
 async def confirm_or_reject(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -367,11 +359,11 @@ async def admin_callbacks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             return
         buttons=[]; txt="💎 <b>قائمة المشتركين:</b>\n\n"
         for uid, info in data.items():
-            uname = "NO_USERNAME"; fullname = ""
+            uname = "NO_USERNAME"; fullname = ""; phone = ""
             for l in open(USERS_FILE,encoding="utf-8"):
                 if l.startswith(f"{uid}|"):
-                    p = l.strip().split("|"); uname = p[1]; fullname = p[2]; break
-            txt+=f"👤 {fullname} (@{uname}) — ID:<code>{uid}</code>\n"
+                    p = l.strip().split("|"); uname = p[1]; fullname = p[2]; phone = p[3] if len(p)>3 else ""; break
+            txt+=f"👤 {fullname} (@{uname}) — ID:<code>{uid}</code> {'— 📞 ' + phone if phone else ''}\n"
             buttons.append([InlineKeyboardButton(f"❌ إلغاء {uname}", callback_data=f"cancel|{uid}")])
         buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="back")])
         await q.edit_message_text(txt, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(buttons))
@@ -433,10 +425,9 @@ if __name__=="__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("subscribe", lambda u,c: c.bot.send_message(
-        u.effective_user.id, "اضغط الزر أدناه للاشتراك.", reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]]))))
+        u.effective_user.id, msg_subscribe(), parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]]))))
     app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_proof))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(MessageHandler(filters.ALL & filters.User(ADMIN_ID), handle_admin_message))
     app.add_handler(CallbackQueryHandler(button_handler, pattern="^(audio|video|cancel)\|"))
