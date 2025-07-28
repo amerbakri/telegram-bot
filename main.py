@@ -368,7 +368,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             username = "NO_USERNAME"
             fullname = ""
             if os.path.exists(USERS_FILE):
-with open(USERS_FILE, "r", encoding="utf-8") as uf:
+    with open(USERS_FILE, "r", encoding="utf-8") as uf:
                     for line in uf:
                         if line.startswith(uid + "|"):
                             parts = line.strip().split("|")
