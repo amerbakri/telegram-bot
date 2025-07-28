@@ -520,7 +520,7 @@ if __name__ == "__main__":
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-    application.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
+    application.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(video|audio|cancel)\|"))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.User(user_id=ADMIN_ID), receive_proof))
    application.add_handler(CommandHandler("admin", admin_panel))
