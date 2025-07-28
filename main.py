@@ -1,124 +1,141 @@
 import os
+import json
 import logging
+from datetime import datetime
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 )
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
-from datetime import datetime
 
-# الإعدادات
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "ضع_توكن_البوت_هنا"
-ADMIN_ID = 337597459  # عدّل إلى آيدي الأدمن
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = 337597459
+USERS_FILE = "users.txt"
+CHATS_FILE = "active_chats.json"
 
 logging.basicConfig(level=logging.INFO)
 
-# حفظ آخر رسالة مرسلة من كل مستخدم (للمطابقة عند الرد)
-last_message_from_user = {}
+# متغير لحفظ المحادثات الجارية
+def load_chats():
+    if not os.path.exists(CHATS_FILE):
+        return {}
+    with open(CHATS_FILE, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
 
-# == استقبال رسالة من المستخدمين وإرسالها للأدمن ==
+def save_chats(chats):
+    with open(CHATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(chats, f, ensure_ascii=False)
+
+# تخزين المستخدمين الجدد
+def store_user(user):
+    entry = f"{user.id}|{user.username or 'NO_USERNAME'}|{user.first_name or ''} {user.last_name or ''}".strip()
+    if not os.path.exists(USERS_FILE):
+        open(USERS_FILE, "w", encoding="utf-8").close()
+    with open(USERS_FILE, "r+", encoding="utf-8") as f:
+        users = f.read().splitlines()
+        if not any(str(user.id) in u for u in users):
+            f.write(f"{entry}\n")
+
+# رسالة البداية
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    store_user(update.effective_user)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 مراسلة الأدمن", callback_data="contact_admin")]
+    ])
+    await update.message.reply_text(
+        "<b>👋 أهلاً بك!</b>\n\n"
+        "يمكنك تحميل الفيديو أو استخدام الذكاء الاصطناعي كالعادة.\n"
+        "أو تواصل مع الأدمن لأي استفسار عبر الزر أدناه.",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
+# تفعيل المحادثة مع الأدمن
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    if query.data == "contact_admin":
+        chats = load_chats()
+        chats[str(user_id)] = True
+        save_chats(chats)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ إنهاء المحادثة مع الأدمن", callback_data="end_admin_chat")]
+        ])
+        await query.message.reply_text(
+            "<b>✉️ تم تفعيل المحادثة مع الأدمن.\nأرسل رسالتك الآن.</b>",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        await query.answer("أرسل أي رسالة ليتم تحويلها مباشرة للأدمن.")
+    elif query.data == "end_admin_chat":
+        chats = load_chats()
+        chats.pop(str(user_id), None)
+        save_chats(chats)
+        await query.message.reply_text(
+            "❌ تم إنهاء المحادثة مع الأدمن. يمكنك استخدام البوت بشكل طبيعي.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await query.answer("تم إنهاء المحادثة.")
+
+# رسائل المستخدم (لوضع المحادثة مع الأدمن)
 async def user_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    msg = update.message
-    # حفظ آخر رسالة للمستخدم
-    last_message_from_user[user.id] = msg.message_id
-    # نص الرسالة
-    text = msg.text or ""
-    media = None
-
-    # تجهيز نص للمشرف
-    info = (
-        f"📩 رسالة من مستخدم:\n"
-        f"👤 الاسم: {user.first_name} {user.last_name or ''}\n"
-        f"🔗 المعرف: @{user.username or 'بدون'}\n"
-        f"🆔 ID: {user.id}\n"
-        f"⏱️ في: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-        f"\n"
-    )
-    if msg.text:
-        info += f"💬 الرسالة:\n{text}"
-        await context.bot.send_message(ADMIN_ID, info, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("رد عليه", callback_data=f"replyto|{user.id}")]
-        ]))
-    elif msg.photo:
-        photo_file = msg.photo[-1].file_id
-        info += f"🖼️ [صورة]\n"
-        await context.bot.send_photo(ADMIN_ID, photo=photo_file, caption=info, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("رد عليه", callback_data=f"replyto|{user.id}")]
-        ]))
-    elif msg.video:
-        video_file = msg.video.file_id
-        info += f"🎬 [فيديو]\n"
-        await context.bot.send_video(ADMIN_ID, video=video_file, caption=info, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("رد عليه", callback_data=f"replyto|{user.id}")]
-        ]))
-    elif msg.voice:
-        voice_file = msg.voice.file_id
-        info += f"🔊 [رسالة صوتية]\n"
-        await context.bot.send_voice(ADMIN_ID, voice=voice_file, caption=info, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("رد عليه", callback_data=f"replyto|{user.id}")]
-        ]))
+    chats = load_chats()
+    if str(user.id) in chats:
+        # رسالة موجهة للأدمن فقط
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"↩️ رد على {user.first_name}", callback_data=f"replyto_{user.id}")]
+        ])
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"💬 رسالة جديدة من <b>{user.first_name}</b> (ID: <code>{user.id}</code>):\n\n{update.message.text}",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
+        await update.message.reply_text("✅ تم إرسال رسالتك للأدمن. سين reply عليك هنا.")
     else:
-        await context.bot.send_message(ADMIN_ID, info + "[رسالة غير معروفة]")
+        # الوضع العادي (ذكاء اصطناعي أو تحميل فيديو...)
+        await update.message.reply_text(
+            "استخدم /start لتفعيل خيارات البوت أو لمراسلة الأدمن."
+        )
 
-    await msg.reply_text("✅ تم إرسال رسالتك إلى الأدمن. سنرد عليك بأقرب وقت.")
-
-# == الأدمن يضغط زر "رد عليه" أو يكتب أمر الرد ==
-reply_to_id = {}
-
-async def replyto_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# الأدمن يضغط رد
+async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data
-    if update.effective_user.id != ADMIN_ID:
-        await query.answer("❌ هذا الزر للمشرف فقط.", show_alert=True)
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("هذا الزر خاص بالأدمن.", show_alert=True)
         return
-    _, uid = data.split("|")
-    reply_to_id[update.effective_user.id] = int(uid)
-    await query.answer()
-    await query.message.reply_text(f"✏️ اكتب رسالتك الآن، وسيتم إرسالها للمستخدم ID:{uid}")
+    if query.data.startswith("replyto_"):
+        context.user_data["reply_target"] = int(query.data.replace("replyto_", ""))
+        await query.message.reply_text("✏️ اكتب ردك ليتم إرساله للمستخدم.")
+        await query.answer("اكتب الآن الرسالة التي تريد إرسالها للمستخدم.")
 
-# == استقبال رسالة من الأدمن وإعادة توجيهها ==
-async def admin_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin = update.effective_user
-    if admin.id != ADMIN_ID: return
+# رسالة الأدمن (رد على المستخدم)
+async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    target_id = context.user_data.pop("reply_target", None)
+    if target_id:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"✉️ رسالة من الأدمن:\n\n{update.message.text}"
+        )
+        await update.message.reply_text("✅ تم إرسال الرد للمستخدم.")
+    else:
+        await update.message.reply_text("❗️ لا يوجد مستخدم للرد عليه. اضغط زر (رد) أولاً.")
 
-    uid = reply_to_id.get(admin.id)
-    if not uid:
-        # دعم الرد عبر أمر: /رد 123456789 مرحباً!
-        if update.message.text and update.message.text.startswith("/رد "):
-            parts = update.message.text.split(" ", 2)
-            if len(parts) >= 3 and parts[1].isdigit():
-                uid = int(parts[1])
-                msg_txt = parts[2]
-                await context.bot.send_message(uid, f"📩 رد الأدمن:\n{msg_txt}")
-                await update.message.reply_text("✅ تم إرسال الرد للمستخدم.")
-            else:
-                await update.message.reply_text("❗ الصيغة: /رد آيدي الرسالة")
-            return
-        await update.message.reply_text("❗ اضغط زر (رد عليه) أسفل رسالة المستخدم أولاً أو استخدم: /رد ID النص")
-        return
+# ربط الهاندلرز
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.User(ADMIN_ID), user_message_handler))
+app.add_handler(CallbackQueryHandler(button_handler, pattern="^(contact_admin|end_admin_chat)$"))
+app.add_handler(CallbackQueryHandler(admin_reply_handler, pattern="^replyto_"))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_ID), admin_text_handler))
 
-    # إرسال نفس نوع الرسالة للمستخدم
-    if update.message.text:
-        await context.bot.send_message(uid, f"📩 رد الأدمن:\n{update.message.text}")
-    elif update.message.photo:
-        await context.bot.send_photo(uid, photo=update.message.photo[-1].file_id, caption="📩 رد الأدمن: صورة")
-    elif update.message.video:
-        await context.bot.send_video(uid, video=update.message.video.file_id, caption="📩 رد الأدمن: فيديو")
-    elif update.message.voice:
-        await context.bot.send_voice(uid, voice=update.message.voice.file_id, caption="📩 رد الأدمن: صوت")
-    await update.message.reply_text("✅ تم إرسال الرد للمستخدم.")
-    reply_to_id.pop(admin.id, None)
-
-# == تشغيل البوت ==
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(MessageHandler(filters.ALL & ~filters.User(user_id=ADMIN_ID), user_message_handler))
-    app.add_handler(CallbackQueryHandler(replyto_callback, pattern=r"^replyto\|"))
-    app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), admin_message_handler))
-    app.add_handler(CommandHandler("reply", admin_message_handler))
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     app.run_webhook(
