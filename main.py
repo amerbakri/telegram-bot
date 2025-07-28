@@ -29,9 +29,6 @@ REQUESTS_FILE = "requests.txt"
 FREE_VIDEO_LIMIT = 3
 FREE_AI_LIMIT = 5
 
-if not BOT_TOKEN or not OPENAI_API_KEY:
-    raise RuntimeError("❌ BOT_TOKEN و OPENAI_API_KEY غير معرفين.")
-
 openai.api_key = OPENAI_API_KEY
 url_store = {}
 quality_map = {
@@ -78,7 +75,7 @@ def deactivate(uid):
     save_json(PAID_FILE, data)
 
 def check_limit(uid, kind):
-    if is_subscribed(uid):
+    if is_subscribed(uid) or uid == ADMIN_ID:
         return True
     data = load_json(USAGE_FILE, {"date": "", "video": {}, "ai": {}})
     today = date.today().isoformat()
@@ -180,10 +177,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             fmt = quality_map.get(qual)
             cmd = ["yt-dlp","--cookies",COOKIES_FILE,"-f",fmt,"-o","video.%(ext)s",url]
             fname=None
-        await q.edit_message_text("⏳ جاري التحميل...")
+        loading = await q.edit_message_text("⏳ جاري التحميل...")
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode!=0:
-            # fallback
             subprocess.run(["yt-dlp","--cookies",COOKIES_FILE,"-f","best[ext=mp4]","-o","video.%(ext)s",url])
         if not fname:
             for ext in ("mp4","mkv","webm"):
@@ -200,25 +196,16 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             update_stats(action, qual if action=="video" else "audio")
         else:
             await q.message.reply_text("❌ فشل التحميل.")
+        try: await loading.delete()
+        except: pass
         return
 
     if action=="subscribe":
-        # طلب اشتراك
         u = q.from_user
-        with open(REQUESTS_FILE,"a",encoding="utf-8") as f:
-            f.write(f"{u.id}|{u.username or ''}|{datetime.utcnow().isoformat()}\n")
         await q.edit_message_text(
             "💳 لإتمام الاشتراك:\n"
             "أرسل 2 دينار إلى 0781200500\n"
             "ثم أرسل صورة الدفع هنا."
-        )
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm|{u.id}"),
-            InlineKeyboardButton("❌ رفض", callback_data=f"reject|{u.id}")
-        ]])
-        await ctx.bot.send_message(ADMIN_ID,
-            f"👤 @{u.username or u.id} طلب اشتراك.",
-            reply_markup=kb
         )
         return
 
@@ -235,6 +222,13 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.message.delete()
         return
 
+    if action=="unsub":
+        uid = int(data[1])
+        deactivate(uid)
+        await ctx.bot.send_message(uid, "❌ تم إلغاء اشتراكك من الأدمن.")
+        await q.message.delete()
+        return
+
 async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not update.message.photo:
         return
@@ -244,7 +238,7 @@ async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     path = f"proofs/{u.id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
     await file.download_to_drive(path)
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm|{u.id}"),
+        InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm|{u.id}"),
         InlineKeyboardButton("❌ رفض", callback_data=f"reject|{u.id}")
     ]])
     await ctx.bot.send_photo(ADMIN_ID, photo=open(path,"rb"),
@@ -261,7 +255,7 @@ async def admin_panel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("💬 بث إعلان", callback_data="broadcast")],
         [InlineKeyboardButton("🔍 بحث", callback_data="search")],
         [InlineKeyboardButton("📊 إحصائيات", callback_data="stats")],
-        [InlineKeyboardButton("💎 مشتركون", callback_data="subs")],
+        [InlineKeyboardButton("💎 المشتركون", callback_data="subs")],
         [InlineKeyboardButton("❌ إغلاق", callback_data="close")]
     ])
     await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=kb)
@@ -291,16 +285,15 @@ async def admin_callbacks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         buttons=[]; txt="💎 المشتركون:\n"
         for uid,active in data.items():
             if active:
-                # find username
                 uname="NO"
                 for l in open(USERS_FILE,encoding="utf-8"):
                     if l.startswith(f"{uid}|"):
                         uname=l.split("|")[1]; break
                 txt+=f"👤 @{uname} — ID:{uid}\n"
-                buttons.append([InlineKeyboardButton(f"❌ إلغاء @{uname}", callback_data=f"reject|{uid}")])
+                buttons.append([InlineKeyboardButton(f"❌ إلغاء @{uname}", callback_data=f"unsub|{uid}")])
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
     elif cmd=="broadcast":
-        await q.edit_message_text("📝 أرسل نص الإعلان:")
+        await q.edit_message_text("📝 أرسل نص الإعلان أو صورة أو فيديو أو صوت:")
         ctx.user_data["broadcast"]=True
     elif cmd=="search":
         await q.edit_message_text("🔍 أرسل اسم أو ID:")
@@ -337,36 +330,39 @@ async def do_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await ctx.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
             elif msg.video:
                 await ctx.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
+            elif msg.audio:
+                await ctx.bot.send_audio(uid, msg.audio.file_id, caption=msg.caption or "")
             else:
                 await ctx.bot.send_message(uid, msg.text)
             sent+=1
         except: pass
     await q.edit_message_text(f"📢 أرسل إلى {sent} مستخدم.")
-    await ctx.bot.send_message(ADMIN_ID,f"📢 قام الأدمن بإرسال الإعلان إلى {sent}.")
+    await ctx.bot.send_message(ADMIN_ID,f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
 if __name__=="__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(
-    CommandHandler(
-        "subscribe",
-        lambda u, c: c.bot.send_message(
-            u.effective_user.id,
-            "اضغط الزر أدناه للاشتراك.",
-            reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]]
+        CommandHandler(
+            "subscribe",
+            lambda u, c: c.bot.send_message(
+                u.effective_user.id,
+                "اضغط الزر أدناه للاشتراك.",
+                reply_markup=InlineKeyboardMarkup(
+                    [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]]
+                )
             )
         )
     )
-)
-
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.PHOTO & filters.User(), receive_proof))
-    app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(video|audio|cancel|subscribe|confirm|reject)$'))
-    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r'^(users|stats|subs|broadcast|search|do_broadcast|close)$'))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(video|audio|cancel|subscribe|confirm|reject|unsub)\|?\d*'))
+    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern=r'^(users|stats|subs|broadcast|search|close)$'))
     app.add_handler(CallbackQueryHandler(do_broadcast, pattern='^do_broadcast$'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_ID), handle_admin_message))
+    app.add_handler(MessageHandler(filters.VIDEO & filters.User(ADMIN_ID), handle_admin_message))
+    app.add_handler(MessageHandler(filters.AUDIO & filters.User(ADMIN_ID), handle_admin_message))
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
     app.run_webhook(
