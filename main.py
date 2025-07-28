@@ -229,7 +229,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except: pass
         return
 
-    if action=="subscribe":
+if action=="subscribe":
     u = q.from_user
     user_waiting_proof.add(u.id)
     await q.edit_message_text(
