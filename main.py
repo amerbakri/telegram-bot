@@ -5,7 +5,6 @@ import re
 import json
 from datetime import datetime, date
 import openai
-user_waiting_proof = set()
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 )
@@ -30,18 +29,13 @@ REQUESTS_FILE = "requests.txt"
 FREE_VIDEO_LIMIT = 3
 FREE_AI_LIMIT = 5
 
+user_waiting_proof = set()  # لمعالجة صورة الاشتراك
+
 # ----------- إنشاء الملفات الفارغة تلقائياً ----------- #
 for f in [USERS_FILE, USAGE_FILE, STATS_FILE, PAID_FILE, REQUESTS_FILE]:
     if not os.path.exists(f):
         with open(f, "w", encoding="utf-8") as ff:
-            if f.endswith(".json"):
-                ff.write(json.dumps({
-                    "date": "",
-                    "video": {},
-                    "ai": {}
-                } if f == USAGE_FILE else {}))
-            else:
-                ff.write("")
+            ff.write("{}" if f.endswith(".json") else "")
 
 openai.api_key = OPENAI_API_KEY
 url_store = {}
@@ -132,13 +126,17 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "🔓 للاشتراك، اضغط /subscribe"
     )
 
-# تفعيل انتظار صورة إثبات الدفع فقط بعد الاشتراك
-user_waiting_proof = set()
-
 async def download(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    # أي رسالة نصية يرسلها المستخدم
     msg = update.message.text.strip()
     u = update.effective_user
     store_user(u)
+
+    # التحقق هل الأدمن في وضع إعلان؟ (لا ترسل للذكاء الصناعي!)
+    if u.id == ADMIN_ID and ctx.user_data.get("broadcast", False):
+        # تعامل في handle_admin_message
+        return
+
     # --- AI الرد الذكي ---
     if not is_valid_url(msg):
         if not check_limit(u.id, "ai"):
@@ -194,6 +192,7 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except: pass
         url_store.pop(data[1],None)
         return
+
     if action in ("video","audio"):
         if action=="audio":
             _, key = data
@@ -229,15 +228,15 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except: pass
         return
 
-if action=="subscribe":
-    u = q.from_user
-    user_waiting_proof.add(u.id)
-    await q.edit_message_text(
-        "💳 لإتمام الاشتراك:\n"
-        "أرسل 2 دينار إلى 0781200500\n"
-        "ثم أرسل صورة الدفع هنا."
-    )
-    return
+    if action=="subscribe":
+        u = q.from_user
+        user_waiting_proof.add(u.id)
+        await q.edit_message_text(
+            "💳 لإتمام الاشتراك:\n"
+            "أرسل 2 دينار إلى 0781200500\n"
+            "ثم أرسل صورة الدفع هنا."
+        )
+        return
 
     if action=="confirm":
         uid = int(data[1])
@@ -264,7 +263,6 @@ if action=="subscribe":
 
 async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
-    # يسمح فقط إذا ضغط "اشترك الآن"
     if u.id not in user_waiting_proof:
         await update.message.reply_text("❌ أرسل /subscribe ثم اضغط (اشترك الآن) أولاً.")
         return
@@ -347,7 +345,7 @@ async def admin_callbacks(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="back")])
         await q.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(buttons))
     elif cmd=="broadcast":
-        await q.edit_message_text("📝 أرسل نص، صورة، فيديو أو صوت ليتم بثه لجميع المستخدمين.\nعند الإرسال اختر تأكيد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="back")]]))
+        await q.edit_message_text("📝 أرسل نص، صورة أو فيديو ليتم بثه لجميع المستخدمين.\nعند الإرسال اختر تأكيد.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="back")]]))
         ctx.user_data["broadcast"]=True
     elif cmd=="search":
         await q.edit_message_text("🔍 أرسل اسم المستخدم أو رقم المستخدم أو الاسم الكامل للبحث عنه.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إلغاء", callback_data="back")]]))
@@ -380,15 +378,11 @@ async def do_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         for l in ff:
             uid=int(l.split("|")[0])
             try:
-                if hasattr(msg, "photo") and msg.photo:
+                if msg.photo:
                     await ctx.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
-                elif hasattr(msg, "video") and msg.video:
+                elif msg.video:
                     await ctx.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
-                elif hasattr(msg, "voice") and msg.voice:
-                    await ctx.bot.send_voice(uid, msg.voice.file_id)
-                elif hasattr(msg, "audio") and msg.audio:
-                    await ctx.bot.send_audio(uid, msg.audio.file_id, caption=msg.caption or "")
-                elif hasattr(msg, "text") and msg.text:
+                elif msg.text:
                     await ctx.bot.send_message(uid, msg.text)
                 sent+=1
             except Exception:
@@ -418,10 +412,6 @@ if __name__=="__main__":
     app.add_handler(CallbackQueryHandler(do_broadcast, pattern='^do_broadcast$'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
     app.add_handler(MessageHandler(filters.TEXT & filters.User(ADMIN_ID), handle_admin_message))
-    app.add_handler(MessageHandler(filters.PHOTO & filters.User(ADMIN_ID), handle_admin_message))
-    app.add_handler(MessageHandler(filters.VIDEO & filters.User(ADMIN_ID), handle_admin_message))
-    app.add_handler(MessageHandler(filters.AUDIO & filters.User(ADMIN_ID), handle_admin_message))
-    app.add_handler(MessageHandler(filters.VOICE & filters.User(ADMIN_ID), handle_admin_message))
     port = int(os.getenv("PORT", "8443"))
     hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "localhost")
     app.run_webhook(
