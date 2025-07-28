@@ -320,24 +320,28 @@ async def handle_admin_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
 async def do_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q=update.callback_query; await q.answer()
-    msg=ctx.user_data.get("bc_msg")
-    sent=0
-    for l in open(USERS_FILE,encoding="utf-8"):
-        uid=int(l.split("|")[0])
+    q = update.callback_query; await q.answer()
+    msg = ctx.user_data.get("bc_msg")
+    sent = 0
+
+    # تحقق من وجود الملف
+    if not os.path.exists(USERS_FILE):
+        open(USERS_FILE, "w", encoding="utf-8").close()
+
+    for l in open(USERS_FILE, encoding="utf-8"):
+        uid = int(l.split("|")[0])
         try:
             if msg.photo:
                 await ctx.bot.send_photo(uid, msg.photo[-1].file_id, caption=msg.caption or "")
             elif msg.video:
                 await ctx.bot.send_video(uid, msg.video.file_id, caption=msg.caption or "")
-            elif msg.audio:
-                await ctx.bot.send_audio(uid, msg.audio.file_id, caption=msg.caption or "")
             else:
                 await ctx.bot.send_message(uid, msg.text)
-            sent+=1
-        except: pass
+            sent += 1
+        except:
+            pass
     await q.edit_message_text(f"📢 أرسل إلى {sent} مستخدم.")
-    await ctx.bot.send_message(ADMIN_ID,f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+    await ctx.bot.send_message(ADMIN_ID, f"📢 قام الأدمن بإرسال الإعلان إلى {sent}.")
 
 if __name__=="__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
