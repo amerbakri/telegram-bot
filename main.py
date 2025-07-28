@@ -5,6 +5,23 @@ import re
 import json
 from datetime import datetime, date
 import openai
+# ====== إنشاء ملفات تلقائياً بالبيانات الأولية الصحيحة =======
+def safe_json_init():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w", encoding="utf-8") as f: f.write("")
+    if not os.path.exists(USAGE_FILE) or os.path.getsize(USAGE_FILE) == 0:
+        with open(USAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"date":"", "video":{}, "ai":{}}, f)
+    if not os.path.exists(STATS_FILE) or os.path.getsize(STATS_FILE) == 0:
+        with open(STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"total":0,"counts":{"720":0,"480":0,"360":0,"audio":0}}, f)
+    if not os.path.exists(PAID_FILE) or os.path.getsize(PAID_FILE) == 0:
+        with open(PAID_FILE, "w", encoding="utf-8") as f: json.dump({}, f)
+    if not os.path.exists(REQUESTS_FILE):
+        with open(REQUESTS_FILE, "w", encoding="utf-8") as f: f.write("")
+
+safe_json_init()
+
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 )
