@@ -358,28 +358,28 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "admin_paidlist":
         data = load_json(SUBSCRIPTIONS_FILE, {})
         if not data:
-            await query.edit_message_text("لا يوجد مشتركين مدفوعين حالياً.", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
-            ]))
+            await query.edit_message_text(
+                "لا يوجد مشتركين مدفوعين حالياً.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
+                ])
+            )
             return
         buttons = []
         text = "👥 قائمة المشتركين المدفوعين:\n\n"
         for uid, info in data.items():
             username = "NO_USERNAME"
             fullname = ""
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r", encoding="utf-8") as uf:
-        # باقي الكود
-          else:
-    # كود بديل إذا لم يكن الملف موجودًا
-               pass
-
+            if os.path.exists(USERS_FILE):
+                with open(USERS_FILE, "r", encoding="utf-8") as uf:
                     for line in uf:
                         if line.startswith(uid + "|"):
                             parts = line.strip().split("|")
                             username = parts[1]
                             fullname = parts[2]
                             break
+            else:
+                pass  # إذا لم يكن هناك ملف مستخدمين
             text += f"👤 {fullname} (@{username}) — ID: {uid}\n"
             buttons.append([InlineKeyboardButton(f"❌ إلغاء {username}", callback_data=f"cancel_subscribe|{uid}")])
         buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
