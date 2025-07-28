@@ -367,8 +367,13 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         for uid, info in data.items():
             username = "NO_USERNAME"
             fullname = ""
-            if os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "r", encoding="utf-8") as uf:
+         if os.path.exists(USERS_FILE):
+               with open(USERS_FILE, "r", encoding="utf-8") as uf:
+        # باقي الكود
+          else:
+    # كود بديل إذا لم يكن الملف موجودًا
+               pass
+
                     for line in uf:
                         if line.startswith(uid + "|"):
                             parts = line.strip().split("|")
