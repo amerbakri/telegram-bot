@@ -350,7 +350,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.edit_message_text(
             "📥 أرسل آيدي المستخدم الذي تريد إضافته كمشترك مدفوع.\nمثال: 123456789"
         )
-        context.user_data["
         context.user_data["waiting_for_addpaid"] = True
     elif data == "admin_paidlist":
         data = load_json(SUBSCRIPTIONS_FILE, {})
