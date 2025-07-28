@@ -523,7 +523,7 @@ if __name__ == "__main__":
     application.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\|"))
     application.add_handler(CallbackQueryHandler(admin_callback_handler))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.User(user_id=ADMIN_ID), receive_proof))
-    application.add_handler(CommandHandler("ادمن", admin_panel))
+   application.add_handler(CommandHandler("admin", admin_panel))
     application.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), admin_media_handler))
 
     application.run_webhook(
