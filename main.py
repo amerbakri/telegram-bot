@@ -347,7 +347,19 @@ async def do_broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 if __name__=="__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("subscribe", lambda u,c: c.bot.send_message(u.effective_user.id,"اضغط الزر أدناه للاشتراك.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]])))
+    app.add_handler(
+    CommandHandler(
+        "subscribe",
+        lambda u, c: c.bot.send_message(
+            u.effective_user.id,
+            "اضغط الزر أدناه للاشتراك.",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe")]]
+            )
+        )
+    )
+)
+
     app.add_handler(CommandHandler("admin", admin_panel))
     app.add_handler(MessageHandler(filters.PHOTO & filters.User(), receive_proof))
     app.add_handler(CallbackQueryHandler(button_handler, pattern=r'^(video|audio|cancel|subscribe|confirm|reject)$'))
