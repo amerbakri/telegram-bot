@@ -5,6 +5,7 @@ import re
 import json
 from datetime import datetime, date
 import openai
+user_waiting_proof = set()
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 )
@@ -229,14 +230,14 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if action=="subscribe":
-        u = q.from_user
-        user_waiting_proof.add(u.id)
-        await q.edit_message_text(
-            "💳 لإتمام الاشتراك:\n"
-            "أرسل 2 دينار إلى 0781200500\n"
-            "ثم أرسل صورة الدفع هنا."
-        )
-        return
+    u = q.from_user
+    user_waiting_proof.add(u.id)
+    await q.edit_message_text(
+        "💳 لإتمام الاشتراك:\n"
+        "أرسل 2 دينار إلى 0781200500\n"
+        "ثم أرسل صورة الدفع هنا."
+    )
+    return
 
     if action=="confirm":
         uid = int(data[1])
@@ -263,9 +264,9 @@ async def button_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
-    # فقط المستخدم الذي طلب اشتراك مؤخراً يسمح له
+    # يسمح فقط إذا ضغط "اشترك الآن"
     if u.id not in user_waiting_proof:
-        await update.message.reply_text("❌ أرسل /subscribe أولاً لطلب الاشتراك.")
+        await update.message.reply_text("❌ أرسل /subscribe ثم اضغط (اشترك الآن) أولاً.")
         return
     user_waiting_proof.remove(u.id)
     if not update.message.photo: return
@@ -279,8 +280,13 @@ async def receive_proof(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject|{u.id}")
         ]
     ])
-    caption=f"📩 إثبات اشتراك جديد:\nالمستخدم: @{u.username or u.id}\nID: {u.id}"
-    await ctx.bot.send_photo(ADMIN_ID, photo=open(path,"rb"), caption=caption, reply_markup=kb)
+    caption=f"📩 إثبات اشتراك جديد:\nالاسم: {u.first_name or ''} {u.last_name or ''}\nالمستخدم: @{u.username or u.id}\nID: {u.id}"
+    await ctx.bot.send_photo(
+        ADMIN_ID,
+        photo=open(path,"rb"),
+        caption=caption,
+        reply_markup=kb
+    )
     await update.message.reply_text("✅ تم استلام إثبات الدفع، سيتم مراجعته من قبل الأدمن.")
 
 # --- لوحة الأدمن ---
