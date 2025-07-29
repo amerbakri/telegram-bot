@@ -212,6 +212,14 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
     store_user(update.effective_user)
     if not is_valid_url(msg):
+        if user_id == ADMIN_ID and user_id in admin_waiting_reply:
+            # رد الأدمن على المستخدم (تجاهل AI هنا)
+            user_reply_id = admin_waiting_reply[user_id]
+            await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
+            await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
+            del admin_waiting_reply[user_id]
+            return
+
         if not check_limits(user_id, "ai"):
             await send_limit_message(update)
             return
@@ -297,6 +305,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await loading_msg.delete()
     except: pass
 
+# دعم دردشة (فتح، رد، إغلاق)
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -396,11 +405,11 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except:
             await query.edit_message_text("تم إغلاق لوحة التحكم.", reply_markup=None)
 
-async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
-    if admin_id != ADMIN_ID:
-        return
-    if admin_id in admin_waiting_reply:
+
+    # إذا الأدمن في وضع رد دعم، أرسل الرد مباشرة للمستخدم
+    if admin_id == ADMIN_ID and admin_id in admin_waiting_reply:
         user_id = admin_waiting_reply[admin_id]
         if update.message.text:
             await context.bot.send_message(user_id, f"📩 رد الأدمن:\n{update.message.text}")
@@ -408,18 +417,61 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
         else:
             await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
         del admin_waiting_reply[admin_id]
+        return
+
+    # أما للمستخدم العادي، استمر في المعالجة AI و فيديو ...
+    if update.message.text:
+        user_id = update.effective_user.id
+        if user_id in open_chats:
+            await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
+            return
+
+        msg = update.message.text.strip()
+        store_user(update.effective_user)
+        if not is_valid_url(msg):
+            if not check_limits(user_id, "ai"):
+                await send_limit_message(update)
+                return
+            try:
+                res = openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "user", "content": msg}]
+                )
+                await update.message.reply_text(res.choices[0].message.content)
+            except Exception as e:
+                await update.message.reply_text(f"⚠️ خطأ AI: {e}")
+            return
+
+        if not check_limits(user_id, "video"):
+            await send_limit_message(update)
+            return
+
+        key = str(update.message.message_id)
+        url_store[key] = msg
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
+            [
+                InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
+                InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
+                InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
+            ],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
+        ])
+        try: await update.message.delete()
+        except: pass
+        await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, media_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CommandHandler("admin", admin_panel))
-app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close)$"))
+app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close|admin_users|admin_broadcast|admin_search|admin_stats|admin_addpaid|admin_paidlist|admin_back|cancel_subscribe\|.+)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
