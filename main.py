@@ -14,9 +14,6 @@ import openai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# =======================
-# ===== الإعدادات ========
-# =======================
 ADMIN_ID = 337597459
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "ضع_توكن_البوت_هنا"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "ضع_مفتاح_OPENAI_هنا"
@@ -30,9 +27,6 @@ DAILY_AI_LIMIT = 5
 
 openai.api_key = OPENAI_API_KEY
 
-# =======================
-# ===== متغيرات عامة =====
-# =======================
 url_store = {}
 user_pending_sub = set()
 open_chats = set()
@@ -44,9 +38,6 @@ quality_map = {
     "360": "best[height<=360][ext=mp4]",
 }
 
-# =======================
-# ===== دوال مساعدة ======
-# =======================
 def load_json(file_path, default=None):
     if not os.path.exists(file_path):
         return default if default is not None else {}
@@ -117,9 +108,6 @@ async def safe_edit_message_text(query, text, reply_markup=None):
 def user_fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
-# =======================
-# ===== دوال البوت =======
-# =======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -264,6 +252,84 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
 
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        if update.message:
+            await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
+        elif update.callback_query:
+            await update.callback_query.answer("⚠️ هذا الأمر خاص بالأدمن فقط.", show_alert=True)
+        return
+    keyboard = [
+        [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
+        [InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("👑 إضافة مشترك مدفوع", callback_data="admin_addpaid")],
+        [InlineKeyboardButton("🟢 قائمة المشتركين", callback_data="admin_paidlist")],
+        [InlineKeyboardButton("❌ إغلاق", callback_data="admin_close")]
+    ]
+    if update.message:
+        await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip() == "ادمن" and update.effective_user.id == ADMIN_ID:
+        await admin_panel(update, context)
+
+async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = update.effective_user.id
+    if admin_id != ADMIN_ID:
+        return
+    if admin_id in admin_waiting_reply:
+        user_id = admin_waiting_reply[admin_id]
+        if update.message.text:
+            await context.bot.send_message(user_id, f"📩 رد الأدمن:\n{update.message.text}")
+            await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_id}.")
+        else:
+            await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
+        del admin_waiting_reply[admin_id]
+
+async def announcement_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if context.user_data.get("waiting_for_announcement"):
+        context.user_data["waiting_for_announcement"] = False
+        message = update.message
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = [line.strip().split("|")[0] for line in f if line.strip()]
+        sent = 0
+        for uid in users:
+            try:
+                await context.bot.send_message(int(uid), message.text)
+                sent += 1
+            except Exception as e:
+                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
+        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+
+async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if context.user_data.get("waiting_for_announcement"):
+        context.user_data["waiting_for_announcement"] = False
+        message = update.message
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = [line.strip().split("|")[0] for line in f if line.strip()]
+        sent = 0
+        for uid in users:
+            try:
+                if message.photo:
+                    await context.bot.send_photo(int(uid), message.photo[-1].file_id, caption=message.caption or "")
+                elif message.video:
+                    await context.bot.send_video(int(uid), message.video.file_id, caption=message.caption or "")
+                elif message.audio:
+                    await context.bot.send_audio(int(uid), message.audio.file_id, caption=message.caption or "")
+                elif message.document:
+                    await context.bot.send_document(int(uid), message.document.file_id, caption=message.caption or "")
+                sent += 1
+            except Exception as e:
+                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
+        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -288,7 +354,6 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.edit_message_text("هذه الدردشة مغلقة أصلاً.")
 
-    # معالجات أخرى للأزرار (إدارة اشتراك وغيره...)
     elif data == "admin_users":
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             users = [line.strip() for line in f if line.strip()]
@@ -469,40 +534,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
 # =======================
-# ===== إضافة الهاندلرز ==
+# ===== الهاندلرز =======
 # =======================
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# أوامر رئيسية
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_panel))
-
-# رسائل الأدمن - نصوص ووسائط
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), text_admin_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), announcement_text_handler))
 app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
-
-# رسائل المستخدمين العادية (تحميل فيديو أو ذكاء اصطناعي)
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-
-# أزرار الاختيارات في البوت (جودة تحميل، إلغاء، اشتراك، إدارة)
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
-
-# لوحة تحكم الأدمن
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_addpaid|admin_paidlist|admin_close|cancel_subscribe\\|.+|support_reply\\|\\d+)$"))
-
-# دعم الدردشة بين المستخدم والأدمن
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^support_(reply|close)\\|\\d+$"))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 
-# تشغيل البوت عبر ويب هوك
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
