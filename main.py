@@ -1,177 +1,181 @@
-// الكود السابق موجود بالفعل هنا ...
+import os
+import subprocess
+import logging
+import re
+import json
+import openai
+from datetime import datetime
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ReplyKeyboardRemove
+)
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, CallbackQueryHandler, filters
+)
 
-# ⬇️ إضافة الدوال الناقصة من البوت الكامل
+logging.basicConfig(level=logging.INFO)
 
-async def receive_subscription_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not update.message.photo:
-        await update.message.reply_text("❌ الرجاء إرسال صورة إثبات الدفع فقط.")
-        return
-    photo_file = await update.message.photo[-1].get_file()
-    photo_path = f"proofs/{user.id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
-    os.makedirs("proofs", exist_ok=True)
-    await photo_file.download_to_drive(photo_path)
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✅ تأكيد الاشتراك", callback_data=f"confirm_sub|{user.id}"),
-            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject_sub|{user.id}")
-        ]
-    ])
-    caption = f"📩 طلب اشتراك جديد:\nالمستخدم: @{user.username or 'NO_USERNAME'}\nID: {user.id}"
-    await context.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=open(photo_path, "rb"),
-        caption=caption,
-        reply_markup=keyboard
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+COOKIES_FILE = "cookies.txt"
+ADMIN_ID = 337597459
+USERS_FILE = "users.txt"
+STATS_FILE = "stats.json"
+LIMITS_FILE = "limits.json"
+SUBSCRIPTIONS_FILE = "subscriptions.json"
+REQUESTS_FILE = "subscription_requests.txt"
+DAILY_VIDEO_LIMIT = 3
+DAILY_AI_LIMIT = 5
+ORANGE_NUMBER = "0781200500"
+
+openai.api_key = OPENAI_API_KEY
+url_store = {}
+quality_map = {
+    "720": "best[height<=720][ext=mp4]",
+    "480": "best[height<=480][ext=mp4]",
+    "360": "best[height<=360][ext=mp4]",
+}
+
+def activate_subscription(user_id):
+    data = load_json(SUBSCRIPTIONS_FILE, {})
+    data[str(user_id)] = {"active": True, "date": datetime.utcnow().isoformat()}
+    save_json(SUBSCRIPTIONS_FILE, data)
+
+def is_subscribed(user_id):
+    data = load_json(SUBSCRIPTIONS_FILE, {})
+    return str(user_id) in data and data[str(user_id)]["active"]
+
+def load_json(file_path, default=None):
+    if not os.path.exists(file_path):
+        return default if default is not None else {}
+    with open(file_path, "r") as f:
+        try: return json.load(f)
+        except: return default if default is not None else {}
+
+def save_json(file_path, data):
+    with open(file_path, "w") as f:
+        json.dump(data, f)
+
+# الذكاء الاصطناعي
+async def ai_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    limits = load_json(LIMITS_FILE, {})
+    if not is_subscribed(user_id):
+        usage = limits.get(user_id, {"ai": 0})
+        if usage["ai"] >= DAILY_AI_LIMIT:
+            await update.message.reply_text(f"❌ الحد اليومي للاستخدام المجاني هو {DAILY_AI_LIMIT} استفسارات. اشترك عبر إرسال صورة الاشتراك.")
+            return
+        usage["ai"] += 1
+        limits[user_id] = usage
+        save_json(LIMITS_FILE, limits)
+    prompt = update.message.text
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}]
     )
-    await update.message.reply_text("✅ تم استلام إثبات الدفع، جاري المراجعة من قبل الأدمن.")
+    reply = response.choices[0].message.content
+    await update.message.reply_text(reply)
 
+# تحميل الفيديوهات
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+    user_id = str(update.effective_user.id)
+    url = update.message.text.strip()
+    if not any(x in url for x in ["youtube.com", "tiktok.com", "facebook.com", "instagram.com"]):
         return
-    user = update.effective_user
-    store_user(user)
-    if not is_subscribed(user.id):
-        allowed = check_limits(user.id, "video")
-        if not allowed:
-            await update.message.reply_text("🚫 لقد وصلت للحد المجاني اليومي. اشترك للمتابعة.")
+    limits = load_json(LIMITS_FILE, {})
+    if not is_subscribed(user_id):
+        usage = limits.get(user_id, {"video": 0})
+        if usage["video"] >= DAILY_VIDEO_LIMIT:
+            await update.message.reply_text(f"❌ الحد اليومي للتحميل المجاني هو {DAILY_VIDEO_LIMIT} فيديوهات. اشترك بإرسال صورة الاشتراك.")
             return
-    text = update.message.text.strip()
-    if not is_valid_url(text):
-        await update.message.reply_text("❌ الرابط غير صالح أو غير مدعوم.")
-        return
-    key = str(update.message.message_id)
-    url_store[key] = text
-    keyboard = [
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
-    ]
-    try: await update.message.delete()
-    except: pass
-    await update.message.reply_text("📥 اختر نوع التنزيل:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+        usage["video"] += 1
+        limits[user_id] = usage
+        save_json(LIMITS_FILE, limits)
+    await update.message.reply_text("⏳ جاري التحميل...")
     try:
-        action, quality, key = query.data.split("|")
-    except:
-        await query.message.reply_text("⚠️ خطأ في المعالجة.")
-        return
-    if action == "cancel":
-        await query.edit_message_text("❌ تم الإلغاء.")
-        url_store.pop(key, None)
-        return
-    url = url_store.get(key)
-    if not url:
-        await query.edit_message_text("⚠️ الرابط غير موجود أو منتهي.")
-        return
-    loading_msg = await query.edit_message_text(f"⏳ جاري التحميل بجودة {quality}...")
-    if action == "audio":
-        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-x", "--audio-format", "mp3", "-o", "audio.%(ext)s", url]
-        filename = "audio.mp3"
-    else:
-        format_code = quality_map.get(quality, "best")
-        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", format_code, "-o", "video.%(ext)s", url]
-        filename = None
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        fallback = subprocess.run(
-            ["yt-dlp", "--cookies", COOKIES_FILE, "-f", "best[ext=mp4]", "-o", "video.%(ext)s", url],
-            capture_output=True, text=True
-        )
-        if fallback.returncode != 0:
-            await query.edit_message_text("🚫 فشل في تحميل الفيديو.")
-            url_store.pop(key, None)
-            return
-    if action == "video":
+        output = subprocess.check_output([
+            "yt-dlp", url,
+            "-f", quality_map["720"],
+            "-o", "temp_video.%(ext)s",
+            "--cookies", COOKIES_FILE
+        ])
         for ext in ["mp4", "mkv", "webm"]:
-            if os.path.exists(f"video.{ext}"):
-                filename = f"video.{ext}"
-                break
-    if filename and os.path.exists(filename):
-        with open(filename, "rb") as f:
-            if action == "audio":
-                await query.message.reply_audio(f)
-            else:
-                await query.message.reply_video(f)
-        os.remove(filename)
-    else:
-        await query.message.reply_text("🚫 لم يتم العثور على الملف.")
-    url_store.pop(key, None)
-    try: await loading_msg.delete()
-    except: pass
+            path = f"temp_video.{ext}"
+            if os.path.exists(path):
+                await update.message.reply_video(video=open(path, "rb"))
+                os.remove(path)
+                return
+        await update.message.reply_text("❌ تعذر التحميل. حاول لاحقًا أو تحقق من الرابط.")
+    except:
+        await update.message.reply_text("❌ حدث خطأ أثناء التحميل.")
 
-async def cancel_subscription_by_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.data.split("|")[1]
-    deactivate_subscription(user_id)
-    await query.edit_message_text(f"✅ تم إلغاء اشتراك المستخدم {user_id} من قبل الأدمن.")
+# start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 مرحبًا بك في البوت! أرسل رابط فيديو لتحميله أو اكتب سؤالك لاستخدام الذكاء الاصطناعي. للمزيد من الاستخدام، اشترك عبر إرسال صورة إثبات الدفع.")
+
+# استلام إثبات الاشتراك
+async def receive_subscription_proof(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.photo:
+        return
+    user_id = str(update.effective_user.id)
+    name = update.effective_user.full_name
+    file_id = update.message.photo[-1].file_id
+    with open(REQUESTS_FILE, "a") as f:
+        f.write(f"{user_id}|{name}|{file_id}\n")
+    await update.message.reply_text("📨 تم استلام إثبات الدفع. سيتم مراجعته من قبل الأدمن قريبًا.")
     try:
-        await context.bot.send_message(chat_id=int(user_id), text="❌ تم إلغاء اشتراكك من قبل الأدمن.")
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ تأكيد", callback_data=f"confirm_sub|{user_id}"),
+             InlineKeyboardButton("❌ رفض", callback_data=f"reject_sub|{user_id}")]
+        ])
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=file_id,
+            caption=f"طلب اشتراك من {name} ({user_id})",
+            reply_markup=keyboard
+        )
     except:
         pass
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    store_user(user)
-    welcome_text = (
-        f"👋 مرحباً {user.first_name or ''}، سعيدون بانضمامك!
+# إحصائيات المشتركين
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    subs = load_json(SUBSCRIPTIONS_FILE, {})
+    total_paid = len(subs)
+    limits = load_json(LIMITS_FILE, {})
+    total_users = len(set(list(subs.keys()) + list(limits.keys())))
+    await update.message.reply_text(f"📊 إحصائيات:\n- مستخدمين إجمالاً: {total_users}\n- مشتركين مدفوعين: {total_paid}")
 
-"
-        "📥 أرسل رابط فيديو من YouTube أو TikTok أو Instagram أو Facebook لتحميله مباشرة.
-"
-        "🎯 يمكنك أيضاً إرسال سؤال وسنستخدم الذكاء الاصطناعي للإجابة عليه.
+# إرسال إعلان للمشتركين
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    await update.message.reply_text("✍️ أرسل الآن نص الإعلان ليتم إرساله للمشتركين المدفوعين.")
+    context.user_data["awaiting_broadcast"] = True
 
-"
-        f"💡 الحد المجاني اليومي: {DAILY_VIDEO_LIMIT} فيديو و{DAILY_AI_LIMIT} استفسار AI.
-"
-        f"🔓 اشترك مقابل 2 دينار عبر أورنج ماني: {ORANGE_NUMBER} وارسِل إثبات الدفع هنا لتفعيل الاشتراك."
-    )
-    await update.message.reply_text(
-        welcome_text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🆘 مساعدة", callback_data="help_menu")]
-        ])
-    )
+async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_broadcast"):
+        context.user_data["awaiting_broadcast"] = False
+        text = update.message.text
+        subs = load_json(SUBSCRIPTIONS_FILE, {})
+        for uid in subs:
+            try:
+                await context.bot.send_message(chat_id=int(uid), text=text)
+            except: pass
+        await update.message.reply_text("✅ تم إرسال الإعلان.")
 
-async def help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    help_text = (
-        "🆘 *مساعدة*:
-"
-        "• أرسل رابط فيديو من TikTok أو YouTube أو Instagram أو Facebook.
-"
-        "• اختر الجودة أو حمّل الصوت فقط.
-"
-        "• يمكنك أيضاً إرسال سؤال وسيتم الرد عليه باستخدام الذكاء الاصطناعي.
-"
-        "• اشترك لتفعيل الاستخدام غير المحدود.
-"
-        "📩 لأي استفسار، تواصل مع الأدمن."
-    )
-    await query.edit_message_text(help_text, parse_mode="Markdown")
+# وظائف إدارية أخرى يجب أن تكون مضافة مسبقاً (مثل admin_addpaid, admin_send_message, إلخ)
 
-# ⬇️ ربط الهاندلرز والبدء بالبروجيكت
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("help", help_menu))
-app.add_handler(CommandHandler("admin", admin_panel))
-app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, receive_subscription_proof))
+app.add_handler(CommandHandler("admin_stats", admin_stats))
+app.add_handler(CommandHandler("admin_broadcast", admin_broadcast))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_auto))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-app.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(video|audio|cancel)\|"))
-app.add_handler(CallbackQueryHandler(confirm_subscription, pattern=r"^confirm_sub\|"))
-app.add_handler(CallbackQueryHandler(reject_subscription, pattern=r"^reject_sub\|"))
-app.add_handler(CallbackQueryHandler(cancel_subscription_by_admin, pattern=r"^cancel_subscribe\|"))
-app.add_handler(CallbackQueryHandler(admin_panel, pattern=r"^admin_back$"))
-app.add_handler(CallbackQueryHandler(help_menu, pattern=r"^help_menu$"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast))
+app.add_handler(MessageHandler(filters.PHOTO, receive_subscription_proof))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
