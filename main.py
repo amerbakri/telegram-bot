@@ -177,7 +177,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
 
-# فتح قائمة الأدمن عند كتابة "ادمن" نصيًا
 async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "ادمن":
         await admin_panel(update, context)
@@ -271,7 +270,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(filename)
         update_stats(action, quality)
     else:
-        await update.message.reply_text("لم يتم العثور على الملف.")
+        await query.message.reply_text("لم يتم العثور على الملف.")
     url_store.pop(key, None)
     try: await loading_msg.delete()
     except: pass
@@ -397,28 +396,6 @@ app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|canc
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_ID:
-        if update.message:
-            await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
-        elif update.callback_query:
-            await update.callback_query.answer("⚠️ هذا الأمر خاص بالأدمن فقط.", show_alert=True)
-        return
-    keyboard = [
-        [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-        [InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("🔍 بحث مستخدم", callback_data="admin_search")],
-        [InlineKeyboardButton("📊 إحصائيات التحميل", callback_data="admin_stats")],
-        [InlineKeyboardButton("👑 إضافة مشترك مدفوع", callback_data="admin_addpaid")],
-        [InlineKeyboardButton("🟢 قائمة المشتركين", callback_data="admin_paidlist")],
-        [InlineKeyboardButton("❌ إغلاق", callback_data="admin_close")]
-    ]
-    if update.message:
-        await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif update.callback_query:
-        await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
-
 app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
