@@ -180,52 +180,16 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
 
-async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-
-    # اطبع الآيدي باللوجات للمراجعة
-    print(f"Pressed support button: user_id={user_id}, ADMIN_ID={ADMIN_ID}, data={data}")
-
-    # فقط الأدمن هو الممنوع يفتح قناة الدعم كمستخدم
-    if user_id == ADMIN_ID:
-        await query.answer("⚠️ الأدمن لا يستطيع فتح قناة الدعم كمستخدم!", show_alert=True)
+async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in open_chats:
+        await update.message.reply_text(
+            "⛔ لم تبدأ قناة الدعم بعد. اضغط زر 'ابدأ الدعم' لفتحها.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")]
+            ])
+        )
         return
-
-    # المستخدم العادي فقط يفتح قناة الدعم
-    if data == "support_start":
-        if user_id in open_chats:
-            await query.answer("قناة الدعم مفتوحة بالفعل.")
-            return
-        open_chats.add(user_id)
-        await query.answer("تم فتح قناة الدعم")
-        await query.edit_message_text(
-            "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]
-            ])
-        )
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"⚠️ فتح دعم جديد من المستخدم: {user_id}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
-                    InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
-                ]
-            ])
-        )
-
-    elif data == "support_end":
-        if user_id in open_chats:
-            open_chats.remove(user_id)
-            await query.answer("تم إغلاق قناة الدعم")
-            await query.edit_message_text("❌ تم إغلاق قناة الدعم.")
-            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
-        else:
-            await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
-
 
     keyboard = InlineKeyboardMarkup([
         [
