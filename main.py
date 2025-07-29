@@ -167,7 +167,7 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
 
-# ========== لوحة الأدمن ==========
+# ===== لوحة الأدمن و الإعلانات =====
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -295,10 +295,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["waiting_for_paid_user"] = True
         await safe_edit_message_text(query, "أرسل رقم ID المستخدم لإضافته كمشترك مدفوع.")
 
-# ========== الإعلان النصي للأدمن ==========
-async def announcement_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ======= هاندلر نصوص الأدمن الذكي =======
+async def admin_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
+
+    # إعلان نصي
     if context.user_data.get("waiting_for_announcement"):
         context.user_data["waiting_for_announcement"] = False
         message = update.message
@@ -312,8 +314,33 @@ async def announcement_text_handler(update: Update, context: ContextTypes.DEFAUL
             except Exception as e:
                 logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
         await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+        return
 
-# ========== إعلان ميديا (صور/فيديو/الخ) ==========
+    # إضافة مشترك مدفوع
+    if context.user_data.get("waiting_for_paid_user"):
+        user_id = update.message.text.strip()
+        if not user_id.isdigit():
+            await update.message.reply_text("يرجى إرسال ID صحيح (أرقام فقط).")
+            return
+        activate_subscription(user_id)
+        await update.message.reply_text(f"تم تفعيل الاشتراك للمستخدم {user_id}.")
+        context.user_data["waiting_for_paid_user"] = False
+        return
+
+    # الرد على دعم
+    if update.effective_user.id in admin_waiting_reply:
+        user_id = admin_waiting_reply[update.effective_user.id]
+        await context.bot.send_message(user_id, f"📩 رد الأدمن:\n{update.message.text}")
+        await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_id}.")
+        del admin_waiting_reply[update.effective_user.id]
+        return
+
+    # أمر "ادمن"
+    if update.message.text.strip() == "ادمن":
+        await admin_panel(update, context)
+        return
+
+# ======= إعلان ميديا للأدمن =======
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -338,27 +365,14 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
         await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
-# ========== إضافة مشترك يدوي ==========
-async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_paid_user"):
-        user_id = update.message.text.strip()
-        if not user_id.isdigit():
-            await update.message.reply_text("يرجى إرسال ID صحيح (أرقام فقط).")
-            return
-        activate_subscription(user_id)
-        await update.message.reply_text(f"تم تفعيل الاشتراك للمستخدم {user_id}.")
-        context.user_data["waiting_for_paid_user"] = False
-
-# ========== دعم المستخدم ==========
+# ======= دعم المستخدم (زر الدعم) =======
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
 
-    # فقط المستخدمين العاديين
-    if user_id == ADMIN_ID:
+    # الأدمن ممنوع يضغط زر الدعم
+    if data == "support_start" and user_id == ADMIN_ID:
         await query.answer("⚠️ هذا الزر للمستخدمين فقط.", show_alert=True)
         return
 
@@ -373,7 +387,9 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]])
         )
         await context.bot.send_message(ADMIN_ID, f"⚠️ فتح دعم جديد من المستخدم: {user_id}")
-    elif data == "support_end":
+        return
+
+    if data == "support_end":
         if user_id in open_chats:
             open_chats.remove(user_id)
             await query.answer("تم إغلاق قناة الدعم")
@@ -381,6 +397,7 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
             await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم.")
         else:
             await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
+        return
 
 async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -434,7 +451,6 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
         del admin_waiting_reply[admin_id]
 
-# ========== تحميل الفيديو وAI ==========
 def update_stats(action, quality):
     stats = load_json("stats.json", {
         "total_downloads": 0,
@@ -471,14 +487,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.message.text.strip()
     store_user(update.effective_user)
-
-    # إذا الأدمن يرد على مستخدم دعم
-    if user_id == ADMIN_ID and user_id in admin_waiting_reply:
-        user_reply_id = admin_waiting_reply[user_id]
-        await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
-        await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
-        del admin_waiting_reply[user_id]
-        return
 
     if not is_valid_url(msg):
         if not check_limits(user_id, "ai"):
@@ -581,29 +589,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.strip() == "ادمن":
-        await admin_panel(update, context)
-
-# ========== الهاندلرز ==========
+# ===== الهاندلرز =====
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# أولوية الهاندلرز للأدمن أولاً!
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), announcement_text_handler))
-app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
+# أدمن: نصوص وإعلانات ذكية
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_text_handler))
+app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.AUDIO | filters.Document.ALL, media_handler))
+# تحميل فيديو / AI للمستخدمين
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
+# أزرار الفيديو / الصوت / إلغاء
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
+# دعم المستخدم وزر الدعم
+app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
+# اشتراك مدفوع وكل زر إدارة الأدمن
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_search|admin_stats|admin_addpaid|admin_paidlist|admin_close|admin_back|cancel_subscribe\\|.+|support_reply\\|\\d+|support_close\\|\\d+)$"))
-app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
-app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
