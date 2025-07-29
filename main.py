@@ -106,12 +106,8 @@ async def safe_edit_message_text(query, text, reply_markup=None):
     except Exception as e:
         logger.warning(f"edit_message_text error: {e}")
 
-# ========== دوال عامة ==========
-
 def user_fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
-
-# ========== دوال الاشتراك المدفوع والدعم ==========
 
 async def send_limit_message(update: Update):
     keyboard = InlineKeyboardMarkup([
@@ -171,7 +167,7 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
 
-# ========== دوال لوحة الأدمن ==========
+# ========== لوحة الأدمن ==========
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -299,8 +295,25 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["waiting_for_paid_user"] = True
         await safe_edit_message_text(query, "أرسل رقم ID المستخدم لإضافته كمشترك مدفوع.")
 
-# ========== الإعلان العام ==========
+# ========== الإعلان النصي للأدمن ==========
+async def announcement_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if context.user_data.get("waiting_for_announcement"):
+        context.user_data["waiting_for_announcement"] = False
+        message = update.message
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = [line.strip().split("|")[0] for line in f if line.strip()]
+        sent = 0
+        for uid in users:
+            try:
+                await context.bot.send_message(int(uid), message.text)
+                sent += 1
+            except Exception as e:
+                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
+        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
+# ========== إعلان ميديا (صور/فيديو/الخ) ==========
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -312,9 +325,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sent = 0
         for uid in users:
             try:
-                if message.text:
-                    await context.bot.send_message(int(uid), message.text)
-                elif message.photo:
+                if message.photo:
                     await context.bot.send_photo(int(uid), message.photo[-1].file_id, caption=message.caption or "")
                 elif message.video:
                     await context.bot.send_video(int(uid), message.video.file_id, caption=message.caption or "")
@@ -327,35 +338,47 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
         await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
-# ========== دعم المستخدم ==========
+# ========== إضافة مشترك يدوي ==========
+async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if context.user_data.get("waiting_for_paid_user"):
+        user_id = update.message.text.strip()
+        if not user_id.isdigit():
+            await update.message.reply_text("يرجى إرسال ID صحيح (أرقام فقط).")
+            return
+        activate_subscription(user_id)
+        await update.message.reply_text(f"تم تفعيل الاشتراك للمستخدم {user_id}.")
+        context.user_data["waiting_for_paid_user"] = False
 
+# ========== دعم المستخدم ==========
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
+
+    # فقط المستخدمين العاديين
+    if user_id == ADMIN_ID:
+        await query.answer("⚠️ هذا الزر للمستخدمين فقط.", show_alert=True)
+        return
+
     if data == "support_start":
         if user_id in open_chats:
             await query.answer("قناة الدعم مفتوحة بالفعل.")
             return
         open_chats.add(user_id)
         await query.answer("تم فتح قناة الدعم")
-        keyboard = InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
-                InlineKeyboardButton("❌ إنهاء", callback_data=f"support_close|{user_id}")
-            ]
-        ])
-        await context.bot.send_message(ADMIN_ID, f"⚠️ فتح دعم جديد من المستخدم: {user_id}", reply_markup=keyboard)
         await safe_edit_message_text(query,
             "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]])
         )
+        await context.bot.send_message(ADMIN_ID, f"⚠️ فتح دعم جديد من المستخدم: {user_id}")
     elif data == "support_end":
         if user_id in open_chats:
             open_chats.remove(user_id)
             await query.answer("تم إغلاق قناة الدعم")
             await safe_edit_message_text(query, "❌ تم إغلاق قناة الدعم.")
-            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبل المستخدم.")
+            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم.")
         else:
             await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
 
@@ -411,20 +434,7 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
         del admin_waiting_reply[admin_id]
 
-# ========== إضافة مشترك مدفوع يدوي ==========
-async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_paid_user"):
-        user_id = update.message.text.strip()
-        if not user_id.isdigit():
-            await update.message.reply_text("يرجى إرسال ID صحيح (أرقام فقط).")
-            return
-        activate_subscription(user_id)
-        await update.message.reply_text(f"تم تفعيل الاشتراك للمستخدم {user_id}.")
-        context.user_data["waiting_for_paid_user"] = False
-
-# ========== تحميل فيديو / ذكاء اصطناعي ==========
+# ========== تحميل الفيديو وAI ==========
 def update_stats(action, quality):
     stats = load_json("stats.json", {
         "total_downloads": 0,
@@ -437,8 +447,23 @@ def update_stats(action, quality):
     stats["most_requested_quality"] = max(stats["quality_counts"], key=stats["quality_counts"].get)
     save_json("stats.json", stats)
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    store_user(user)
+    keyboard = [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]]
+    if user.id != ADMIN_ID:
+        keyboard.insert(0, [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")])
+    markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "👋 أهلاً! أرسل رابط فيديو من YouTube, TikTok, Facebook, Instagram لتحميله.\n"
+        "الحد المجاني: 3 فيديو و 5 استفسارات AI يومياً.\n"
+        f"للاشتراك المدفوع: إرسال 2 دينار عبر أورنج ماني {ORANGE_NUMBER} ثم أرسل صورة التحويل.",
+        reply_markup=markup
+    )
+
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    # منع أي نص خلال الإعلانات أو الدعم
     if context.user_data.get("waiting_for_announcement"):
         return
     if user_id in open_chats:
@@ -517,7 +542,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
 
-    await safe_edit_message_text(query, "⏳ جاري التحميل...")
+    await query.edit_message_text("⏳ جاري التحميل...")
 
     output = "video.mp4"
     download_cmd = []
@@ -560,24 +585,15 @@ async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if update.message.text.strip() == "ادمن":
         await admin_panel(update, context)
 
-# ========== رسالة البدء ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    store_user(user)
-    keyboard = [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]]
-    if user.id != ADMIN_ID:
-        keyboard.insert(0, [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")])
-    keyboard = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "👋 أهلاً! أرسل رابط فيديو من YouTube, TikTok, Facebook, Instagram لتحميله.\n"
-        "الحد المجاني: 3 فيديو و 5 استفسارات AI يومياً.\n"
-        f"للاشتراك المدفوع: إرسال 2 دينار عبر أورنج ماني {ORANGE_NUMBER} ثم أرسل صورة التحويل.",
-        reply_markup=keyboard
-    )
-
 # ========== الهاندلرز ==========
 app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# أولوية الهاندلرز للأدمن أولاً!
 app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), announcement_text_handler))
+app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
@@ -587,9 +603,6 @@ app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\
 app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_search|admin_stats|admin_addpaid|admin_paidlist|admin_close|admin_back|cancel_subscribe\\|.+|support_reply\\|\\d+|support_close\\|\\d+)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
-app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 
 if __name__ == "__main__":
