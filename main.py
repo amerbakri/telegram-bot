@@ -111,9 +111,10 @@ def user_fullname(user):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
-    keyboard = [[InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]]
-    if user.id != ADMIN_ID:
-        keyboard.insert(0, [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")])
+    keyboard = [
+        [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")],
+        [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
+    ]
     markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
         "👋 أهلاً! أرسل رابط فيديو من YouTube, TikTok, Facebook, Instagram لتحميله.\n"
@@ -180,6 +181,43 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
 
+async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    if data == "support_start":
+        if user_id in open_chats:
+            await query.answer("قناة الدعم مفتوحة بالفعل.")
+            return
+        open_chats.add(user_id)
+        await query.answer("تم فتح قناة الدعم")
+        await query.edit_message_text(
+            "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]
+            ])
+        )
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"⚠️ فتح دعم جديد من المستخدم: {user_id}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
+                    InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
+                ]
+            ])
+        )
+
+    elif data == "support_end":
+        if user_id in open_chats:
+            open_chats.remove(user_id)
+            await query.answer("تم إغلاق قناة الدعم")
+            await query.edit_message_text("❌ تم إغلاق قناة الدعم.")
+            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
+        else:
+            await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
+
 async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in open_chats:
@@ -217,364 +255,8 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id != ADMIN_ID:
-        if update.message:
-            await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
-        elif update.callback_query:
-            await update.callback_query.answer("⚠️ هذا الأمر خاص بالأدمن فقط.", show_alert=True)
-        return
-    keyboard = [
-        [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-        [InlineKeyboardButton("📢 إرسال إعلان", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("👑 إضافة مشترك مدفوع", callback_data="admin_addpaid")],
-        [InlineKeyboardButton("🟢 قائمة المشتركين", callback_data="admin_paidlist")],
-        [InlineKeyboardButton("❌ إغلاق", callback_data="admin_close")]
-    ]
-    if update.message:
-        await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
-    elif update.callback_query:
-        await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text.strip() == "ادمن" and update.effective_user.id == ADMIN_ID:
-        await admin_panel(update, context)
-
-async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    admin_id = update.effective_user.id
-    if admin_id != ADMIN_ID:
-        return
-    if admin_id in admin_waiting_reply:
-        user_id = admin_waiting_reply[admin_id]
-        if update.message.text:
-            await context.bot.send_message(user_id, f"📩 رد الأدمن:\n{update.message.text}")
-            await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_id}.")
-        else:
-            await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
-        del admin_waiting_reply[admin_id]
-
-async def announcement_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_announcement"):
-        context.user_data["waiting_for_announcement"] = False
-        message = update.message
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = [line.strip().split("|")[0] for line in f if line.strip()]
-        sent = 0
-        for uid in users:
-            try:
-                await context.bot.send_message(int(uid), message.text)
-                sent += 1
-            except Exception as e:
-                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
-        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
-
-async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_announcement"):
-        context.user_data["waiting_for_announcement"] = False
-        message = update.message
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = [line.strip().split("|")[0] for line in f if line.strip()]
-        sent = 0
-        for uid in users:
-            try:
-                if message.photo:
-                    await context.bot.send_photo(int(uid), message.photo[-1].file_id, caption=message.caption or "")
-                elif message.video:
-                    await context.bot.send_video(int(uid), message.video.file_id, caption=message.caption or "")
-                elif message.audio:
-                    await context.bot.send_audio(int(uid), message.audio.file_id, caption=message.caption or "")
-                elif message.document:
-                    await context.bot.send_document(int(uid), message.document.file_id, caption=message.caption or "")
-                sent += 1
-            except Exception as e:
-                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
-        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
-
-async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    admin_id = query.from_user.id
-
-    if admin_id != ADMIN_ID:
-        await query.answer("هذا الزر للأدمن فقط", show_alert=True)
-        return
-
-    if data.startswith("support_reply|"):
-        user_id = int(data.split("|")[1])
-        admin_waiting_reply[admin_id] = user_id
-        await query.answer("اكتب ردك وسيتم إرساله للمستخدم.")
-        await query.edit_message_text(f"الآن اكتب الرد للمستخدم {user_id}.")
-
-    elif data.startswith("support_close|"):
-        user_id = int(data.split("|")[1])
-        if user_id in open_chats:
-            open_chats.remove(user_id)
-            await context.bot.send_message(user_id, "⚠️ تم إغلاق دردشة الدعم من قبل الأدمن.")
-            await query.edit_message_text(f"تم إغلاق دردشة الدعم مع المستخدم {user_id}.")
-        else:
-            await query.edit_message_text("هذه الدردشة مغلقة أصلاً.")
-
-    elif data == "admin_users":
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            users = [line.strip() for line in f if line.strip()]
-        count = len(users)
-        recent_users = "\n".join(users[-5:]) if users else "لا يوجد مستخدمين."
-        text = f"👥 عدد المستخدمين: {count}\n\n📋 آخر 5 مستخدمين:\n{recent_users}"
-        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_close")]
-        ]))
-    elif data == "admin_paidlist":
-        data_subs = load_json(SUBSCRIPTIONS_FILE, {})
-        if not data_subs:
-            await safe_edit_message_text(query, "لا يوجد مشتركين مدفوعين حالياً.", reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔙 رجوع", callback_data="admin_close")]
-            ]))
-            return
-        text = "👥 قائمة المشتركين المدفوعين:\n\n"
-        buttons = []
-        for uid in data_subs.keys():
-            buttons.append([
-                InlineKeyboardButton(f"❌ إلغاء الاشتراك {uid}", callback_data=f"cancel_subscribe|{uid}"),
-                InlineKeyboardButton(f"✉️ فتح محادثة", callback_data=f"support_reply|{uid}")
-            ])
-            text += f"ID: {uid}\n"
-        buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_close")])
-        await safe_edit_message_text(query, text, reply_markup=InlineKeyboardMarkup(buttons))
-    elif data == "admin_broadcast":
-        await safe_edit_message_text(query, "📝 أرسل لي الإعلان (نص أو صورة أو فيديو أو صوت):")
-        context.user_data["waiting_for_announcement"] = True
-    elif data == "admin_addpaid":
-        context.user_data["waiting_for_paid_user"] = True
-        await safe_edit_message_text(query, "أرسل رقم ID المستخدم لإضافته كمشترك مدفوع.")
-    elif data == "admin_close":
-        try:
-            await query.message.delete()
-        except:
-            await safe_edit_message_text(query, "تم إغلاق لوحة التحكم.", reply_markup=None)
-    elif data.startswith("cancel_subscribe|"):
-        _, user_id = data.split("|")
-        deactivate_subscription(user_id)
-        await safe_edit_message_text(query, f"✅ تم إلغاء اشتراك المستخدم {user_id}.")
-        try:
-            await context.bot.send_message(chat_id=int(user_id), text="❌ تم إلغاء اشتراكك من قبل الأدمن.")
-        except:
-            pass
-
-async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-
-    # لا يوجد أي شرط للأدمن أو غيره
-    if data == "support_start":
-        if user_id in open_chats:
-            await query.answer("قناة الدعم مفتوحة بالفعل.")
-            return
-        open_chats.add(user_id)
-        await query.answer("تم فتح قناة الدعم")
-        await query.edit_message_text(
-            "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]
-            ])
-        )
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"⚠️ فتح دعم جديد من المستخدم: {user_id}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
-                    InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
-                ]
-            ])
-        )
-
-    elif data == "support_end":
-        if user_id in open_chats:
-            open_chats.remove(user_id)
-            await query.answer("تم إغلاق قناة الدعم")
-            await query.edit_message_text("❌ تم إغلاق قناة الدعم.")
-            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
-        else:
-            await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
-
-
-
-    # الذكاء الاصطناعي فقط للمستخدمين العاديين
-    if not is_valid_url(msg):
-        if user_id == ADMIN_ID:
-            return
-        if not check_limits(user_id, "ai"):
-            await send_limit_message(update)
-            return
-        try:
-            res = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": msg}]
-            )
-            await update.message.reply_text(res.choices[0].message.content)
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
-        return
-
-    # تحقق من حد تحميل الفيديو
-    if not check_limits(user_id, "video"):
-        await send_limit_message(update)
-        return
-
-    key = str(update.message.message_id)
-    url_store[key] = msg
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
-    ])
-    try:
-        await update.message.delete()
-    except:
-        pass
-    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
-
-    if "|" not in data:
-        await query.answer("طلب غير صالح.")
-        return
-
-    action, quality, key = data.split("|")
-    if action == "cancel":
-        try:
-            await query.message.delete()
-        except:
-            pass
-        url_store.pop(key, None)
-        return
-
-    url = url_store.get(key)
-    if not url:
-        await query.answer("انتهت صلاحية الرابط.")
-        try:
-            await query.message.delete()
-        except:
-            pass
-        return
-
-    await query.edit_message_text("⏳ جاري التحميل...")
-
-    output = "video.mp4"
-    download_cmd = []
-    caption = ""
-
-    if action == "audio":
-        download_cmd = [
-            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio",
-            "--audio-format", "mp3", "-o", output, "--cookies", COOKIES_FILE, url
-        ]
-        caption = "🎵 تم التحميل (صوت فقط)"
-    elif action == "video":
-        quality_code = quality_map.get(quality, "best[ext=mp4]")
-        download_cmd = [
-            "yt-dlp", "-f", quality_code, "-o", output, "--cookies", COOKIES_FILE, url
-        ]
-        caption = f"🎬 تم التحميل بجودة {quality}p"
-
-    try:
-        subprocess.run(download_cmd, check=True)
-        with open(output, "rb") as video_file:
-            if action == "audio":
-                await context.bot.send_audio(chat_id=user_id, audio=video_file, caption=caption)
-            else:
-                await context.bot.send_video(chat_id=user_id, video=video_file, caption=caption)
-    except Exception as e:
-        await context.bot.send_message(chat_id=user_id, text=f"❌ حدث خطأ أثناء التحميل: {e}")
-    finally:
-        if os.path.exists(output):
-            os.remove(output)
-        url_store.pop(key, None)
-    try:
-        await query.message.delete()
-    except:
-        pass
-async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_paid_user"):
-        user_id = update.message.text.strip()
-        if not user_id.isdigit():
-            await update.message.reply_text("يرجى إرسال رقم ID صحيح (أرقام فقط).")
-            return
-        activate_subscription(user_id)
-        await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {user_id}.")
-        context.user_data["waiting_for_paid_user"] = False
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-
-    if user_id in open_chats:
-        await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
-        return
-
-    msg = update.message.text.strip()
-    store_user(update.effective_user)
-
-    # رد الأدمن على مستخدم الدعم
-    if user_id == ADMIN_ID and user_id in admin_waiting_reply:
-        user_reply_id = admin_waiting_reply[user_id]
-        await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
-        await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
-        del admin_waiting_reply[user_id]
-        return
-
-    # الذكاء الاصطناعي فقط للمستخدمين العاديين
-    if not is_valid_url(msg):
-        if user_id == ADMIN_ID:
-            return
-        if not check_limits(user_id, "ai"):
-            await send_limit_message(update)
-            return
-        try:
-            res = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": msg}]
-            )
-            await update.message.reply_text(res.choices[0].message.content)
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
-        return
-
-    # تحقق من حد تحميل الفيديو
-    if not check_limits(user_id, "video"):
-        await send_limit_message(update)
-        return
-
-    key = str(update.message.message_id)
-    url_store[key] = msg
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
-    ])
-    try:
-        await update.message.delete()
-    except:
-        pass
-    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
-
+# باقي الدوال مثل (admin_panel, text_admin_handler, admin_reply_message_handler, ...)
+# ... انسخهم كما هم من كودك إذا تحتاجهم
 
 # =======================
 # ===== الهاندلرز =======
@@ -582,29 +264,16 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("admin", admin_panel))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), text_admin_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), announcement_text_handler))
-app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
-app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
-app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
-app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
-app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
-app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_addpaid|admin_paidlist|admin_close|cancel_subscribe\\|.+|support_reply\\|\\d+)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
-app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^support_(reply|close)\\|\\d+$"))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
+# باقي الهاندلرز...
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
-app.run_webhook(
-    listen="0.0.0.0",
-    port=port,
-    url_path=BOT_TOKEN,
-    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+    )
