@@ -521,12 +521,6 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = query.from_user.id
     data = query.data
 
-    print(f"Pressed support button: user_id={user_id}, ADMIN_ID={ADMIN_ID}, data={data}")
-
-    if user_id == ADMIN_ID:
-        await query.answer("⚠️ الأدمن لا يستطيع فتح قناة الدعم كمستخدم!", show_alert=True)
-        return
-
     if data == "support_start":
         if user_id in open_chats:
             await query.answer("قناة الدعم مفتوحة بالفعل.")
@@ -570,6 +564,6 @@ if __name__ == "__main__":
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path=BOT_TOKEN,
+        url_path=BOT_TOKEN,ئئ
         webhook_url=f"https://{hostname}/{BOT_TOKEN}"
     )
