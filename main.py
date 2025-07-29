@@ -594,43 +594,6 @@ app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subs
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_addpaid|admin_paidlist|admin_close|cancel_subscribe\\|.+|support_reply\\|\\d+)$"))
-async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-
-    if data == "support_start":
-        if user_id in open_chats:
-            await query.answer("قناة الدعم مفتوحة بالفعل.")
-            return
-        open_chats.add(user_id)
-        await query.answer("تم فتح قناة الدعم")
-        await query.edit_message_text(
-            "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]
-            ])
-        )
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"⚠️ فتح دعم جديد من المستخدم: {user_id}",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
-                    InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
-                ]
-            ])
-        )
-
-    elif data == "support_end":
-        if user_id in open_chats:
-            open_chats.remove(user_id)
-            await query.answer("تم إغلاق قناة الدعم")
-            await query.edit_message_text("❌ تم إغلاق قناة الدعم.")
-            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
-        else:
-            await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
-
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^support_(reply|close)\\|\\d+$"))
