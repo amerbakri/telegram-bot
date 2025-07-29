@@ -359,7 +359,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                             break
             text += f"👤 {fullname} (@{username}) — ID: {uid}\n"
             buttons.append([InlineKeyboardButton(f"❌ إلغاء {username}", callback_data=f"cancel_subscribe|{uid}")])
-        buttons.append([InlineKeyboardButton("🔙 رجbuttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
+        buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
         await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
     elif data == "admin_close":
         await query.edit_message_text("❌ تم إغلاق لوحة التحكم.", reply_markup=ReplyKeyboardRemove())
