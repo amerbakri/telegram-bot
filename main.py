@@ -561,9 +561,9 @@ app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), ad
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        url_path=BOT_TOKEN,ئئ
-        webhook_url=f"https://{hostname}/{BOT_TOKEN}"
-    )
+app.run_webhook(
+    listen="0.0.0.0",
+    port=port,
+    url_path=BOT_TOKEN,
+    webhook_url=f"https://{hostname}/{BOT_TOKEN}"
+)
