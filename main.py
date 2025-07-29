@@ -84,6 +84,14 @@ def deactivate_subscription(user_id):
     data = load_json(SUBSCRIPTIONS_FILE, {})
     if str(user_id) in data: data.pop(str(user_id))
     save_json(SUBSCRIPTIONS_FILE, data)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    store_user(user)
+    await update.message.reply_text(
+        "👋 أهلاً! أرسل لي رابط فيديو من يوتيوب أو تيك توك أو إنستا أو فيسبوك لتحميله 🎥\n"
+        "💡 الحد المجاني: 3 فيديوهات و5 استفسارات AI يومياً.\n"
+        f"🔔 للاشتراك المدفوع، أرسل 2 دينار إلى أورنج ماني على الرقم: {ORANGE_NUMBER} ثم أرسل صورة التحويل هنا."
+    )
 
 def check_limits(user_id, action):
     if is_subscribed(user_id): return True
