@@ -483,7 +483,32 @@ app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), ad
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ...
+    user = update.effective_user
+    if user.id in user_pending_sub:
+        await update.callback_query.answer("✅ تم إرسال طلبك بالفعل! انتظر مراجعة الأدمن.")
+        return
+    user_pending_sub.add(user.id)
+    user_data = (
+        f"طلب اشتراك جديد:\n"
+        f"الاسم: {user_fullname(user)}\n"
+        f"المستخدم: @{user.username or 'NO_USERNAME'}\n"
+        f"ID: {user.id}"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✉️ فتح محادثة", callback_data=f"support_reply|{user.id}"),
+            InlineKeyboardButton("✅ تفعيل الاشتراك", callback_data=f"confirm_sub|{user.id}"),
+            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject_sub|{user.id}")
+        ],
+        [InlineKeyboardButton("❌ إنهاء الدعم", callback_data=f"support_close|{user.id}")]
+    ])
+    await context.bot.send_message(
+        ADMIN_ID, user_data, reply_markup=keyboard
+    )
+    await update.callback_query.edit_message_text(
+        "تم إرسال طلب الاشتراك للأدمن، سيتم تفعيله بعد المراجعة."
+    )
+
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
