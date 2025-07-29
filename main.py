@@ -255,18 +255,130 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
 
-# باقي الدوال مثل (admin_panel, text_admin_handler, admin_reply_message_handler, ...)
-# ... انسخهم كما هم من كودك إذا تحتاجهم
+# ------------- تحميل الفيديو وذكاء صناعي --------------
 
-# =======================
-# ===== الهاندلرز =======
-# =======================
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in open_chats:
+        await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
+        return
+
+    msg = update.message.text.strip()
+    store_user(update.effective_user)
+
+    if not is_valid_url(msg):
+        if user_id == ADMIN_ID:
+            return
+        if not check_limits(user_id, "ai"):
+            await send_limit_message(update)
+            return
+        try:
+            res = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": msg}]
+            )
+            await update.message.reply_text(res.choices[0].message.content)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
+        return
+
+    if not check_limits(user_id, "video"):
+        await send_limit_message(update)
+        return
+
+    key = str(update.message.message_id)
+    url_store[key] = msg
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
+        [
+            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
+            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
+            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
+        ],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
+    ])
+    try:
+        await update.message.delete()
+    except:
+        pass
+    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+
+    if "|" not in data:
+        await query.answer("طلب غير صالح.")
+        return
+
+    action, quality, key = data.split("|")
+    if action == "cancel":
+        try:
+            await query.message.delete()
+        except:
+            pass
+        url_store.pop(key, None)
+        return
+
+    url = url_store.get(key)
+    if not url:
+        await query.answer("انتهت صلاحية الرابط.")
+        try:
+            await query.message.delete()
+        except:
+            pass
+        return
+
+    await query.edit_message_text("⏳ جاري التحميل...")
+
+    output = "video.mp4"
+    download_cmd = []
+    caption = ""
+
+    if action == "audio":
+        download_cmd = [
+            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio",
+            "--audio-format", "mp3", "-o", output, "--cookies", COOKIES_FILE, url
+        ]
+        caption = "🎵 تم التحميل (صوت فقط)"
+    elif action == "video":
+        quality_code = quality_map.get(quality, "best[ext=mp4]")
+        download_cmd = [
+            "yt-dlp", "-f", quality_code, "-o", output, "--cookies", COOKIES_FILE, url
+        ]
+        caption = f"🎬 تم التحميل بجودة {quality}p"
+
+    try:
+        subprocess.run(download_cmd, check=True)
+        with open(output, "rb") as video_file:
+            if action == "audio":
+                await context.bot.send_audio(chat_id=user_id, audio=video_file, caption=caption)
+            else:
+                await context.bot.send_video(chat_id=user_id, video=video_file, caption=caption)
+    except Exception as e:
+        await context.bot.send_message(chat_id=user_id, text=f"❌ حدث خطأ أثناء التحميل: {e}")
+    finally:
+        if os.path.exists(output):
+            os.remove(output)
+        url_store.pop(key, None)
+    try:
+        await query.message.delete()
+    except:
+        pass
+
+# ----------------- الهاندلرز -----------------
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-
 app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
+app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
+app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
+app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
-# باقي الهاندلرز...
+
+# هنا يمكنك إضافة أي هاندلر زيادة مثل الأدمن إذا عندك دوال أخرى مثل admin_panel وغيرها
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
