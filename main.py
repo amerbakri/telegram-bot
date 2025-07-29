@@ -185,9 +185,9 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = query.from_user.id
     data = query.data
 
-    # فقط الأدمن يُمنع من فتح دعم كمستخدم، أما باقي المستخدمين يفتح لهم الدعم
+    # الأدمن فقط الممنوع يفتح قناة دعم كمستخدم، أما باقي المستخدمين عادي
     if user_id == ADMIN_ID:
-        await query.answer("⚠️ الأدمن لا يستطيع فتح دعم كمستخدم!", show_alert=True)
+        await query.answer("⚠️ الأدمن لا يستطيع فتح قناة الدعم كمستخدم!", show_alert=True)
         return
 
     if data == "support_start":
