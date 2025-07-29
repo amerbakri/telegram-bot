@@ -372,7 +372,53 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(ADMIN_ID, f"رسالة جديدة من المستخدم {user_id}.", reply_markup=keyboard)
 
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
+async def broadcast_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text("📝 أرسل لي نص الإعلان:")
+    context.user_data["waiting_for_announcement"] = True
 
+async def show_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    stats = load_json("stats.json", {
+        "total_downloads": 0,
+        "quality_counts": {"720": 0, "480": 0, "360": 0, "audio": 0},
+        "most_requested_quality": None
+    })
+    text = (
+        f"📊 إحصائيات التحميل:\n"
+        f"عدد الفيديوهات المنزلة: {stats.get('total_downloads', 0)}\n"
+        f"جودة 720p: {stats['quality_counts'].get('720', 0)} مرات\n"
+        f"جودة 480p: {stats['quality_counts'].get('480', 0)} مرات\n"
+        f"جودة 360p: {stats['quality_counts'].get('360', 0)} مرات\n"
+        f"تحميل الصوت فقط: {stats['quality_counts'].get('audio', 0)} مرات\n"
+        f"أكثر جودة مطلوبة: {stats.get('most_requested_quality', '-')}"
+    )
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
+    ]))
+async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("waiting_for_announcement"):
+        context.user_data["waiting_for_announcement"] = False
+        message = update.message
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = [line.strip().split("|")[0] for line in f if line.strip()]
+        sent = 0
+        for uid in users:
+            try:
+                if message.text:
+                    await context.bot.send_message(int(uid), message.text)
+                elif message.photo:
+                    await context.bot.send_photo(int(uid), message.photo[-1].file_id, caption=message.caption or "")
+                elif message.video:
+                    await context.bot.send_video(int(uid), message.video.file_id, caption=message.caption or "")
+                elif message.audio:
+                    await context.bot.send_audio(int(uid), message.audio.file_id, caption=message.caption or "")
+                sent += 1
+            except Exception as e:
+                logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
+        await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
+        return
+    # ... باقي الكود الس
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
