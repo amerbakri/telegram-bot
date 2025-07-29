@@ -271,6 +271,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await loading_msg.delete()
     except: pass
 
+async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in open_chats:
+        await update.message.reply_text(
+            "⛔ لم تبدأ قناة الدعم بعد. اضغط زر 'ابدأ الدعم' لفتحها.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")]])
+        )
+        return
+
+    reply_markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
+            InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
+        ]
+    ])
+
+    # إعادة توجيه الرسالة للأدمن مع أزرار الرد والإغلاق
+    if update.message.text:
+        await context.bot.send_message(ADMIN_ID, f"من المستخدم {user_id}:\n{update.message.text}", reply_markup=reply_markup)
+    elif update.message.photo:
+        await context.bot.send_photo(ADMIN_ID, update.message.photo[-1].file_id,
+                                     caption=f"من المستخدم {user_id}:\n{update.message.caption or ''}",
+                                     reply_markup=reply_markup)
+    elif update.message.video:
+        await context.bot.send_video(ADMIN_ID, update.message.video.file_id,
+                                     caption=f"من المستخدم {user_id}:\n{update.message.caption or ''}",
+                                     reply_markup=reply_markup)
+    elif update.message.audio:
+        await context.bot.send_audio(ADMIN_ID, update.message.audio.file_id,
+                                     caption=f"من المستخدم {user_id}:\n{update.message.caption or ''}",
+                                     reply_markup=reply_markup)
+    elif update.message.document:
+        await context.bot.send_document(ADMIN_ID, update.message.document.file_id,
+                                        caption=f"من المستخدم {user_id}:\n{update.message.caption or ''}",
+                                        reply_markup=reply_markup)
+    else:
+        await context.bot.send_message(ADMIN_ID, f"رسالة غير مدعومة من المستخدم {user_id}.", reply_markup=reply_markup)
+
+    await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
+
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
