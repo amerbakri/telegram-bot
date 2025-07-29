@@ -14,6 +14,7 @@ import openai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# إعدادات البوت
 ADMIN_ID = 337597459
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "ضع_توكن_البوت_هنا"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "ضع_مفتاح_OPENAI_هنا"
@@ -199,7 +200,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# الدوال الخاصة بلوحة الأدمن:
+# == لوحة الأدمن ==
 
 async def show_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -298,6 +299,8 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             await query.message.delete()
         except:
             await query.edit_message_text("تم إغلاق لوحة التحكم.", reply_markup=None)
+
+# == دعم المستخدم ==
 
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("waiting_for_announcement"):
@@ -407,7 +410,8 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-app.add_handler(CommandHandler("start", start))
+# == تحميل الفيديو / الذكاء الاصطناعي ==
+
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in open_chats:
@@ -460,11 +464,79 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
 
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    user_id = query.from_user.id
+
+    if "|" not in data:
+        await query.answer("طلب غير صالح.")
+        return
+
+    action, quality, key = data.split("|")
+    if action == "cancel":
+        try:
+            await query.message.delete()
+        except:
+            pass
+        url_store.pop(key, None)
+        return
+
+    url = url_store.get(key)
+    if not url:
+        await query.answer("انتهت صلاحية الرابط.")
+        try:
+            await query.message.delete()
+        except:
+            pass
+        return
+
+    await query.edit_message_text("⏳ جاري التحميل...")
+
+    output = "video.mp4"
+    download_cmd = []
+    caption = ""
+
+    if action == "audio":
+        download_cmd = [
+            "yt-dlp", "-f", "bestaudio[ext=m4a]/bestaudio/best", "--extract-audio",
+            "--audio-format", "mp3", "-o", output, "--cookies", COOKIES_FILE, url
+        ]
+        caption = "🎵 تم التحميل (صوت فقط)"
+        update_stats("audio", "audio")
+    elif action == "video":
+        quality_code = quality_map.get(quality, "best[ext=mp4]")
+        download_cmd = [
+            "yt-dlp", "-f", quality_code, "-o", output, "--cookies", COOKIES_FILE, url
+        ]
+        caption = f"🎬 تم التحميل بجودة {quality}p"
+        update_stats("video", quality)
+
+    try:
+        subprocess.run(download_cmd, check=True)
+        with open(output, "rb") as video_file:
+            if action == "audio":
+                await context.bot.send_audio(chat_id=user_id, audio=video_file, caption=caption)
+            else:
+                await context.bot.send_video(chat_id=user_id, video=video_file, caption=caption)
+    except Exception as e:
+        await context.bot.send_message(chat_id=user_id, text=f"❌ حدث خطأ أثناء التحميل: {e}")
+    finally:
+        if os.path.exists(output):
+            os.remove(output)
+        url_store.pop(key, None)
+    try:
+        await query.message.delete()
+    except:
+        pass
+
 async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text.strip() == "ادمن":
         await admin_panel(update, context)
 
+# == الهاندلرز ==
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
@@ -473,9 +545,9 @@ app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\
 app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_search|admin_stats|admin_addpaid|admin_paidlist|admin_close|admin_back|cancel_subscribe\\|.+|support_reply\\|\\d+|support_close\\|\\d+)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
-app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
