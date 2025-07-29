@@ -482,6 +482,8 @@ app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), ad
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
+async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ...
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
