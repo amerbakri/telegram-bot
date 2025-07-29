@@ -184,8 +184,10 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     user_id = query.from_user.id
     data = query.data
+
+    # فقط الأدمن يُمنع من فتح دعم كمستخدم، أما باقي المستخدمين يفتح لهم الدعم
     if user_id == ADMIN_ID:
-        await query.answer("⚠️ هذا الزر للمستخدمين فقط.", show_alert=True)
+        await query.answer("⚠️ الأدمن لا يستطيع فتح دعم كمستخدم!", show_alert=True)
         return
 
     if data == "support_start":
