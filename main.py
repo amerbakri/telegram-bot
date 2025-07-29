@@ -3,15 +3,12 @@ import json
 import subprocess
 import re
 import logging
-import re
-
-def is_valid_url(text):
-    pattern = r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
-    return re.match(pattern, text) is not None
-
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ContextTypes, filters
+)
 import openai
 
 logging.basicConfig(level=logging.INFO)
@@ -44,12 +41,18 @@ def load_json(file_path, default=None):
     if not os.path.exists(file_path):
         return default if default is not None else {}
     with open(file_path, "r", encoding="utf-8") as f:
-        try: return json.load(f)
-        except: return default if default is not None else {}
+        try:
+            return json.load(f)
+        except:
+            return default if default is not None else {}
 
 def save_json(file_path, data):
     with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+def is_valid_url(text):
+    pattern = r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+"
+    return re.match(pattern, text) is not None
 
 def store_user(user):
     if not os.path.exists(USERS_FILE):
@@ -72,18 +75,22 @@ def activate_subscription(user_id):
 
 def deactivate_subscription(user_id):
     data = load_json(SUBSCRIPTIONS_FILE, {})
-    if str(user_id) in data: data.pop(str(user_id))
+    if str(user_id) in data:
+        data.pop(str(user_id))
     save_json(SUBSCRIPTIONS_FILE, data)
 
 def check_limits(user_id, action):
-    if is_subscribed(user_id): return True
+    if is_subscribed(user_id):
+        return True
     today = datetime.utcnow().strftime("%Y-%m-%d")
     limits = load_json(LIMITS_FILE, {})
     user_limits = limits.get(str(user_id), {})
     if user_limits.get("date") != today:
         user_limits = {"date": today, "video": 0, "ai": 0}
-    if action == "video" and user_limits["video"] >= DAILY_VIDEO_LIMIT: return False
-    if action == "ai" and user_limits["ai"] >= DAILY_AI_LIMIT: return False
+    if action == "video" and user_limits["video"] >= DAILY_VIDEO_LIMIT:
+        return False
+    if action == "ai" and user_limits["ai"] >= DAILY_AI_LIMIT:
+        return False
     user_limits[action] += 1
     limits[str(user_id)] = user_limits
     save_json(LIMITS_FILE, limits)
@@ -158,10 +165,15 @@ def update_stats(action, quality):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 ابدأ الدعم", callback_data="support_start")],
+        [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
+    ])
     await update.message.reply_text(
         "👋 أهلاً! أرسل رابط فيديو من YouTube, TikTok, Facebook, Instagram لتحميله.\n"
         "الحد المجاني: 3 فيديو و 5 استفسارات AI يومياً.\n"
-        f"للاشتراك المدفوع: إرسال 2 دينار عبر أورنج ماني {ORANGE_NUMBER} ثم أرسل صورة التحويل."
+        f"للاشتراك المدفوع: إرسال 2 دينار عبر أورنج ماني {ORANGE_NUMBER} ثم أرسل صورة التحويل.",
+        reply_markup=keyboard
     )
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -391,7 +403,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     elif data == "admin_back":
         await admin_panel(update, context)
 
-# ربط الهاندلرز
+# تسجيل الهاندلرز
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
