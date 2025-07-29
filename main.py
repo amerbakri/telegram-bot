@@ -473,24 +473,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =======================
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# أوامر رئيسية
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin_panel))
+
+# رسائل الأدمن - نصوص ووسائط
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), text_admin_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), announcement_text_handler))
 app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), add_paid_user_handler))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
+
+# رسائل المستخدمين العادية (تحميل فيديو أو ذكاء اصطناعي)
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+
+# أزرار الاختيارات في البوت (جودة تحميل، إلغاء، اشتراك، إدارة)
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
+
+# لوحة تحكم الأدمن
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_broadcast|admin_addpaid|admin_paidlist|admin_close|cancel_subscribe\\|.+|support_reply\\|\\d+)$"))
+
+# دعم الدردشة بين المستخدم والأدمن
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^support_(reply|close)\\|\\d+$"))
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 
+# تشغيل البوت عبر ويب هوك
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
     hostname = os.environ.get("RENDER_EXTERNAL_HOSTNAME", "localhost")
