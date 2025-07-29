@@ -505,7 +505,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
     except:
         pass
-        async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     if context.user_data.get("waiting_for_paid_user"):
