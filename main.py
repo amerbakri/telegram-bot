@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 
 logging.basicConfig(level=logging.INFO)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COOKIES_FILE = "cookies.txt"
@@ -106,8 +107,6 @@ async def send_limit_message(update: Update):
         parse_mode="HTML"
     )
 
-# == استقبال طلب الاشتراك ==
-
 async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id in user_pending_sub:
@@ -153,8 +152,6 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="HTML"
     )
     await query.edit_message_text("🚫 تم رفض الاشتراك لهذا المستخدم.", parse_mode="HTML")
-
-# == تحميل الفيديو ==
 
 def update_stats(action, quality):
     stats = load_json(STATS_FILE, {
