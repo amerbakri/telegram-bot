@@ -505,6 +505,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.delete()
     except:
         pass
+        async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if context.user_data.get("waiting_for_paid_user"):
+        user_id = update.message.text.strip()
+        if not user_id.isdigit():
+            await update.message.reply_text("يرجى إرسال رقم ID صحيح (أرقام فقط).")
+            return
+        activate_subscription(user_id)
+        await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {user_id}.")
+        context.user_data["waiting_for_paid_user"] = False
+
 
 # =======================
 # ===== الهاندلرز =======
