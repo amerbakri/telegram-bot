@@ -177,6 +177,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=keyboard
     )
 
+# فتح قائمة الأدمن عند كتابة "ادمن" نصيًا
+async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip() == "ادمن":
+        await admin_panel(update, context)
+
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in open_chats:
@@ -266,7 +271,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         os.remove(filename)
         update_stats(action, quality)
     else:
-        await query.message.reply_text("لم يتم العثور على الملف.")
+        await update.message.reply_text("لم يتم العثور على الملف.")
     url_store.pop(key, None)
     try: await loading_msg.delete()
     except: pass
@@ -383,58 +388,20 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
         del admin_waiting_reply[admin_id]
 
-async def confirm_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = context.user_data.get("announcement")
-    if not message:
-        await query.edit_message_text("🚫 لا يوجد إعلان محفوظ.")
-        return
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        users = [line.strip() for line in f if line.strip()]
-    sent = 0
-    for line in users:
-        try:
-            uid = int(line.split("|")[0])
-            if message.photo:
-                await context.bot.send_photo(uid, message.photo[-1].file_id, caption=message.caption or "")
-            elif message.video:
-                await context.bot.send_video(uid, message.video.file_id, caption=message.caption or "")
-            elif message.audio:
-                await context.bot.send_audio(uid, message.audio.file_id, caption=message.caption or "")
-            elif message.text:
-                await context.bot.send_message(uid, message.text)
-            sent += 1
-        except:
-            continue
-    await query.edit_message_text(f"✅ تم إرسال الإعلان إلى {sent} مستخدم.")
-
-async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("waiting_for_announcement"):
-        context.user_data["waiting_for_announcement"] = False
-        context.user_data["announcement"] = update.message
-        await update.message.reply_text("✅ هل تريد تأكيد الإرسال؟", reply_markup=InlineKeyboardMarkup([
-            [
-                InlineKeyboardButton("✅ نعم", callback_data="confirm_broadcast"),
-                InlineKeyboardButton("❌ إلغاء", callback_data="admin_close")
-            ]
-        ]))
-        return
-    # يمكن إضافة معالجة انتظار البحث أو إضافة مشترك هنا حسب الكود السابق
-
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
-app.add_handler(CommandHandler("admin", start))  # ممكن تغير لـ admin_panel إذا عندك
-app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close|confirm_broadcast)$"))
+app.add_handler(CommandHandler("admin", admin_panel))
+app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
-app.add_handler(MessageHandler(filters.ALL & filters.User(user_id=ADMIN_ID), media_handler))
-app.add_handler(CommandHandler("reply", admin_reply_message_handler))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
