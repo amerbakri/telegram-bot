@@ -14,7 +14,7 @@ import openai
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# إعدادات البوت
+# إعدادات
 ADMIN_ID = 337597459
 BOT_TOKEN = os.getenv("BOT_TOKEN") or "ضع_توكن_البوت_هنا"
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "ضع_مفتاح_OPENAI_هنا"
@@ -58,7 +58,7 @@ def is_valid_url(text):
 
 def store_user(user):
     if not os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "w", encoding="utf-8") as f: pass
+        open(USERS_FILE, "w", encoding="utf-8").close()
     with open(USERS_FILE, "r", encoding="utf-8") as f:
         users = f.read().splitlines()
     entry = f"{user.id}|{user.username or 'NO_USERNAME'}|{user.first_name or ''} {user.last_name or ''}"
@@ -109,7 +109,6 @@ async def safe_edit_message_text(query, text, reply_markup=None):
 def user_fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
-# --------- UI START (زر الدعم فقط للمستخدم) -----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -124,7 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=markup
     )
 
-# ----------- Limit Message -----------
 async def send_limit_message(update: Update):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔓 اشترك الآن", callback_data="subscribe_request")]
@@ -137,7 +135,52 @@ async def send_limit_message(update: Update):
         reply_markup=keyboard
     )
 
-# --------- دعم المستخدم -----------
+async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id in user_pending_sub:
+        await update.callback_query.answer("✅ تم إرسال طلبك بالفعل! انتظر مراجعة الأدمن.")
+        return
+    user_pending_sub.add(user.id)
+    user_data = (
+        f"طلب اشتراك جديد:\n"
+        f"الاسم: {user_fullname(user)}\n"
+        f"المستخدم: @{user.username or 'NO_USERNAME'}\n"
+        f"ID: {user.id}"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✉️ فتح محادثة", callback_data=f"support_reply|{user.id}"),
+            InlineKeyboardButton("✅ تفعيل الاشتراك", callback_data=f"confirm_sub|{user.id}"),
+            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject_sub|{user.id}")
+        ],
+        [InlineKeyboardButton("❌ إنهاء الدعم", callback_data=f"support_close|{user.id}")]
+    ])
+    await context.bot.send_message(
+        ADMIN_ID, user_data, reply_markup=keyboard
+    )
+    await update.callback_query.edit_message_text(
+        "تم إرسال طلب الاشتراك للأدمن، سيتم تفعيله بعد المراجعة."
+    )
+
+async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, user_id = query.data.split("|")
+    activate_subscription(user_id)
+    user_pending_sub.discard(int(user_id))
+    await context.bot.send_message(chat_id=int(user_id),
+        text="✅ تم تفعيل اشتراكك بنجاح!"
+    )
+    await safe_edit_message_text(query, "تم تفعيل الاشتراك للمستخدم.")
+
+async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    _, user_id = query.data.split("|")
+    user_pending_sub.discard(int(user_id))
+    await context.bot.send_message(chat_id=int(user_id),
+        text="❌ تم رفض طلب الاشتراك."
+    )
+    await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
+
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -195,7 +238,6 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
                                         caption=f"من المستخدم {user_id}:\n{update.message.caption or ''}", reply_markup=keyboard)
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
 
-# ----------- إدارة لوحة الأدمن -----------
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id != ADMIN_ID:
@@ -233,7 +275,6 @@ async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text("⚠️ فقط رسائل نصية مدعومة حالياً.")
         del admin_waiting_reply[admin_id]
 
-# ----------- الإعلان (نصي/ميديا) -----------
 async def announcement_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -275,7 +316,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"خطأ إرسال الإعلان للمستخدم {uid}: {e}")
         await update.message.reply_text(f"📢 تم إرسال الإعلان إلى {sent} مستخدم.")
 
-# ----------- دعم (أزرار الأدمن مع المستخدمين) -----------
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -336,22 +376,24 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("اكتب ردك وسيتم إرساله للمستخدم.")
         await safe_edit_message_text(query, f"الآن اكتب الرد للمستخدم {user_id}.")
 
-# ----------- إضافة مشترك يدوي -----------
+async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
 async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     if context.user_data.get("waiting_for_paid_user"):
         user_id = update.message.text.strip()
         if not user_id.isdigit():
-            await update.message.reply_text("يرجى إرسال ID صحيح (أرقام فقط).")
+            await update.message.reply_text("يرجى إرسال رقم ID صحيح (أرقام فقط).")
             return
         activate_subscription(user_id)
-        await update.message.reply_text(f"تم تفعيل الاشتراك للمستخدم {user_id}.")
+        await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {user_id}.")
         context.user_data["waiting_for_paid_user"] = False
 
-# ----------- تحميل فيديو/AI -----------
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
     if user_id in open_chats:
         await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
         return
@@ -359,7 +401,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text.strip()
     store_user(update.effective_user)
 
-    # إذا الأدمن يرد على مستخدم دعم
+    # رد الأدمن على مستخدم الدعم
     if user_id == ADMIN_ID and user_id in admin_waiting_reply:
         user_reply_id = admin_waiting_reply[user_id]
         await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
@@ -367,7 +409,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del admin_waiting_reply[user_id]
         return
 
-    # ذكاء صناعي فقط للمستخدم العادي
+    # الذكاء الاصطناعي فقط للمستخدمين العاديين
     if not is_valid_url(msg):
         if user_id == ADMIN_ID:
             return
@@ -384,6 +426,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ خطأ AI: {e}")
         return
 
+    # تحقق من حد تحميل الفيديو
     if not check_limits(user_id, "video"):
         await send_limit_message(update)
         return
@@ -469,8 +512,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-# ----------- Handlers ترتيب متسلسل مهم -----------
-
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
@@ -482,33 +523,6 @@ app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), ad
 app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
-async def handle_subscription_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id in user_pending_sub:
-        await update.callback_query.answer("✅ تم إرسال طلبك بالفعل! انتظر مراجعة الأدمن.")
-        return
-    user_pending_sub.add(user.id)
-    user_data = (
-        f"طلب اشتراك جديد:\n"
-        f"الاسم: {user_fullname(user)}\n"
-        f"المستخدم: @{user.username or 'NO_USERNAME'}\n"
-        f"ID: {user.id}"
-    )
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("✉️ فتح محادثة", callback_data=f"support_reply|{user.id}"),
-            InlineKeyboardButton("✅ تفعيل الاشتراك", callback_data=f"confirm_sub|{user.id}"),
-            InlineKeyboardButton("❌ رفض الاشتراك", callback_data=f"reject_sub|{user.id}")
-        ],
-        [InlineKeyboardButton("❌ إنهاء الدعم", callback_data=f"support_close|{user.id}")]
-    ])
-    await context.bot.send_message(
-        ADMIN_ID, user_data, reply_markup=keyboard
-    )
-    await update.callback_query.edit_message_text(
-        "تم إرسال طلب الاشتراك للأدمن، سيتم تفعيله بعد المراجعة."
-    )
-
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
