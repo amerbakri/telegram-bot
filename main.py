@@ -96,6 +96,21 @@ def check_limits(user_id, action):
     limits[str(user_id)] = user_limits
     save_json(LIMITS_FILE, limits)
     return True
+async def show_paid_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = load_json(SUBSCRIPTIONS_FILE, {})
+    if not data:
+        await query.edit_message_text("لا يوجد مشتركين مدفوعين حالياً.", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")]
+        ]))
+        return
+    text = "👥 قائمة المشتركين المدفوعين:\n\n"
+    buttons = []
+    for uid in data.keys():
+        buttons.append([InlineKeyboardButton(f"❌ إلغاء الاشتراك {uid}", callback_data=f"cancel_subscribe|{uid}")])
+        text += f"ID: {uid}\n"
+    buttons.append([InlineKeyboardButton("🔙 رجوع", callback_data="admin_back")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def send_limit_message(update: Update):
     keyboard = InlineKeyboardMarkup([
