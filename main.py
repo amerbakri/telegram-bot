@@ -108,6 +108,8 @@ async def safe_edit_message_text(query, text, reply_markup=None):
 def user_fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
+# ----------- واجهة البداية والدعم -----------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -180,6 +182,8 @@ async def reject_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE
         text="❌ تم رفض طلب الاشتراك."
     )
     await safe_edit_message_text(query, "تم رفض الاشتراك للمستخدم.")
+
+# ----------- الدعم (مستخدم/أدمن) -----------
 
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -255,7 +259,28 @@ async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     await update.message.reply_text("✅ تم إرسال رسالتك للأدمن، انتظر الرد.")
 
-# ------------- تحميل الفيديو وذكاء صناعي --------------
+# ----------- الرد من الأدمن على المستخدم (ميزة مهمة) -----------
+async def admin_reply_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    reply_to = None
+    # دعم الرد السريع من زر في الدعم
+    if "reply_to_user" in context.user_data:
+        reply_to = context.user_data["reply_to_user"]
+        del context.user_data["reply_to_user"]
+    # دعم الرد العادي (لو كتب الأدمن "/reply 123456")
+    elif update.message.text and update.message.text.startswith("/reply "):
+        try:
+            reply_to = int(update.message.text.split()[1])
+        except: pass
+
+    if reply_to:
+        await context.bot.send_message(chat_id=reply_to, text=f"📩 رد الأدمن:\n{update.message.text}")
+        await update.message.reply_text("✅ تم إرسال ردك للمستخدم.")
+    else:
+        await update.message.reply_text("❗ استخدم زر الرد ضمن الدعم أو أرسل الأمر: /reply [ID] متبوع برسالتك.")
+
+# ----------- تحميل الفيديو والذكاء الصناعي -----------
 
 async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -377,8 +402,7 @@ app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
-
-# هنا يمكنك إضافة أي هاندلر زيادة مثل الأدمن إذا عندك دوال أخرى مثل admin_panel وغيرها
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_handler))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
