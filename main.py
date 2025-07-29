@@ -516,6 +516,62 @@ async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TY
         activate_subscription(user_id)
         await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {user_id}.")
         context.user_data["waiting_for_paid_user"] = False
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    if user_id in open_chats:
+        await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
+        return
+
+    msg = update.message.text.strip()
+    store_user(update.effective_user)
+
+    # رد الأدمن على مستخدم الدعم
+    if user_id == ADMIN_ID and user_id in admin_waiting_reply:
+        user_reply_id = admin_waiting_reply[user_id]
+        await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
+        await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
+        del admin_waiting_reply[user_id]
+        return
+
+    # الذكاء الاصطناعي فقط للمستخدمين العاديين
+    if not is_valid_url(msg):
+        if user_id == ADMIN_ID:
+            return
+        if not check_limits(user_id, "ai"):
+            await send_limit_message(update)
+            return
+        try:
+            res = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": msg}]
+            )
+            await update.message.reply_text(res.choices[0].message.content)
+        except Exception as e:
+            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
+        return
+
+    # تحقق من حد تحميل الفيديو
+    if not check_limits(user_id, "video"):
+        await send_limit_message(update)
+        return
+
+    key = str(update.message.message_id)
+    url_store[key] = msg
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{key}")],
+        [
+            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{key}"),
+            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{key}"),
+            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{key}")
+        ],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{key}")]
+    ])
+    try:
+        await update.message.delete()
+    except:
+        pass
+    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
 
 
 # =======================
