@@ -290,35 +290,116 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
         else:
             await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
 
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != ADMIN_ID:
+        if update.message:
+            await update.message.reply_text("⚠️ هذا الأمر خاص بالأدمن فقط.")
+        elif update.callback_query:
+            await update.callback_query.answer("⚠️ هذا الأمر خاص بالأدمن فقط.", show_alert=True)
+        return
+    keyboard = [
+        [InlineKeyboardButton("عدد المستخدمين", callback_data="admin_users")],
+        [InlineKeyboardButton("المشتركين المدفوعين", callback_data="admin_paidlist")],
+        [InlineKeyboardButton("قائمة دعم المستخدمين", callback_data="admin_support_list")],
+        [InlineKeyboardButton("الإحصائيات", callback_data="admin_stats")],
+        [InlineKeyboardButton("إرسال إعلان", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("إغلاق", callback_data="admin_close")]
+    ]
+    if update.message:
+        await update.message.reply_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
+    elif update.callback_query:
+        await update.callback_query.edit_message_text("لوحة تحكم الأدمن:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    admin_id = query.from_user.id
-
-    if admin_id != ADMIN_ID:
-        await query.answer("هذا الزر للأدمن فقط", show_alert=True)
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("هذا الزر مخصص للأدمن فقط.", show_alert=True)
         return
 
-    if data.startswith("support_reply|"):
-        user_id = int(data.split("|")[1])
-        admin_waiting_reply[admin_id] = user_id
-        await query.answer("اكتب ردك وسيتم إرساله للمستخدم.")
-        await query.edit_message_text(f"الآن اكتب الرد للمستخدم {user_id}.")
-
-    elif data.startswith("support_close|"):
-        user_id = int(data.split("|")[1])
-        if user_id in open_chats:
-            open_chats.remove(user_id)
-            await context.bot.send_message(user_id, "⚠️ تم إغلاق دردشة الدعم من قبل الأدمن.")
-            await query.edit_message_text(f"تم إغلاق دردشة الدعم مع المستخدم {user_id}.")
-        else:
-            await query.edit_message_text("هذه الدردشة مغلقة أصلاً.")
-
-    elif data == "admin_close":
+    if data == "admin_close":
         try:
             await query.message.delete()
         except:
             await query.edit_message_text("تم إغلاق لوحة التحكم.", reply_markup=None)
+
+    elif data == "admin_users":
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            users = f.read().splitlines()
+        count = len(users)
+        recent = "\n\nآخر 5 مستخدمين:\n"
+        for u in users[-5:]:
+            uid, username, name = u.split("|")
+            recent += f"{name} | @{username} | ID: {uid}\n"
+        await query.edit_message_text(f"عدد المستخدمين: {count}{recent}", reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("رجوع", callback_data="admin_back")]
+        ]))
+
+    elif data == "admin_paidlist":
+        data = load_json(SUBSCRIPTIONS_FILE, {})
+        if not data:
+            await query.edit_message_text("لا يوجد مشتركين مدفوعين حالياً.", reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("رجوع", callback_data="admin_back")]
+            ]))
+            return
+        buttons = []
+        text = "قائمة المشتركين المدفوعين:\n\n"
+        for uid in data.keys():
+            username = "NO_USERNAME"
+            fullname = ""
+            if os.path.exists(USERS_FILE):
+                with open(USERS_FILE, "r", encoding="utf-8") as uf:
+                    for line in uf:
+                        if line.startswith(uid + "|"):
+                            parts = line.strip().split("|")
+                            username = parts[1]
+                            fullname = parts[2]
+                            break
+            text += f"{fullname} (@{username}) — ID: {uid}\n"
+            buttons.append([InlineKeyboardButton(f"❌ إلغاء {username}", callback_data=f"cancel_subscribe|{uid}")])
+        buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_back")])
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif data.startswith("cancel_subscribe|"):
+        _, user_id = data.split("|")
+        deactivate_subscription(user_id)
+        await query.edit_message_text(f"تم إلغاء اشتراك المستخدم {user_id}.")
+        try:
+            await context.bot.send_message(chat_id=int(user_id), text="تم إلغاء اشتراكك من قبل الأدمن.")
+        except:
+            pass
+
+    elif data == "admin_support_list":
+        if not open_chats:
+            await query.edit_message_text("لا يوجد مستخدمين لديهم دردشة دعم مفتوحة حالياً.")
+            return
+        buttons = []
+        for uid in open_chats:
+            buttons.append([
+                InlineKeyboardButton(f"رد على {uid}", callback_data=f"support_reply|{uid}"),
+                InlineKeyboardButton(f"إغلاق {uid}", callback_data=f"support_close|{uid}")
+            ])
+        buttons.append([InlineKeyboardButton("رجوع", callback_data="admin_back")])
+        await query.edit_message_text("قائمة مستخدمي الدعم:", reply_markup=InlineKeyboardMarkup(buttons))
+
+    elif data.startswith("support_reply|"):
+        uid = int(data.split("|")[1])
+        admin_waiting_reply[query.from_user.id] = uid
+        await query.edit_message_text(f"الآن اكتب ردك للمستخدم {uid} بالصيغ التالية:\n"
+                                      f"/reply <user_id> <رسالتك>")
+
+    elif data.startswith("support_close|"):
+        uid = int(data.split("|")[1])
+        if uid in open_chats:
+            open_chats.remove(uid)
+            await context.bot.send_message(uid, "تم إغلاق دردشة الدعم من قبل الأدمن.")
+            await query.edit_message_text(f"تم إغلاق دردشة الدعم مع المستخدم {uid}.")
+        else:
+            await query.edit_message_text("هذه الدردشة مغلقة أصلاً.")
+
+    elif data == "admin_back":
+        await admin_panel(update, context)
 
 async def admin_reply_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
@@ -342,7 +423,7 @@ app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subs
 app.add_handler(CallbackQueryHandler(confirm_subscription, pattern="^confirm_sub\\|"))
 app.add_handler(CallbackQueryHandler(reject_subscription, pattern="^reject_sub\\|"))
 app.add_handler(CommandHandler("admin", admin_panel))
-app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close)$"))
+app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(admin_users|admin_paidlist|admin_support_list|cancel_subscribe\\|.+|support_reply\\|\\d+|support_close\\|\\d+|admin_close|admin_back)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
 app.add_handler(CommandHandler("reply", admin_reply_message_handler))
