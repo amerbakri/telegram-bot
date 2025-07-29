@@ -365,35 +365,43 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except:
             pass
 
-async def add_paid_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if context.user_data.get("waiting_for_paid_user"):
-        user_id = update.message.text.strip()
-        if not user_id.isdigit():
-            await update.message.reply_text("يرجى إرسال رقم ID صحيح (أرقام فقط).")
+async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    data = query.data
+
+    if data == "support_start":
+        if user_id in open_chats:
+            await query.answer("قناة الدعم مفتوحة بالفعل.")
             return
-        activate_subscription(user_id)
-        await update.message.reply_text(f"✅ تم تفعيل الاشتراك للمستخدم {user_id}.")
-        context.user_data["waiting_for_paid_user"] = False
+        open_chats.add(user_id)
+        await query.answer("تم فتح قناة الدعم")
+        await query.edit_message_text(
+            "💬 تم فتح قناة الدعم. يمكنك الآن إرسال رسائلك.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ إنهاء الدعم", callback_data="support_end")]
+            ])
+        )
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"⚠️ فتح دعم جديد من المستخدم: {user_id}",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📝 رد", callback_data=f"support_reply|{user_id}"),
+                    InlineKeyboardButton("❌ إغلاق", callback_data=f"support_close|{user_id}")
+                ]
+            ])
+        )
 
-async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    elif data == "support_end":
+        if user_id in open_chats:
+            open_chats.remove(user_id)
+            await query.answer("تم إغلاق قناة الدعم")
+            await query.edit_message_text("❌ تم إغلاق قناة الدعم.")
+            await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
+        else:
+            await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
 
-    if user_id in open_chats:
-        await update.message.reply_text("📩 أنت في دردشة الدعم، رجاءً انتظر رد الأدمن.")
-        return
-
-    msg = update.message.text.strip()
-    store_user(update.effective_user)
-
-    # رد الأدمن على مستخدم الدعم
-    if user_id == ADMIN_ID and user_id in admin_waiting_reply:
-        user_reply_id = admin_waiting_reply[user_id]
-        await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
-        await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
-        del admin_waiting_reply[user_id]
-        return
 
     # الذكاء الاصطناعي فقط للمستخدمين العاديين
     if not is_valid_url(msg):
