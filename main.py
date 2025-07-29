@@ -370,6 +370,7 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
     user_id = query.from_user.id
     data = query.data
 
+    # لا يوجد أي شرط للأدمن أو غيره
     if data == "support_start":
         if user_id in open_chats:
             await query.answer("قناة الدعم مفتوحة بالفعل.")
@@ -401,6 +402,7 @@ async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_T
             await context.bot.send_message(user_id, "❌ تم إغلاق قناة الدعم من قبلك.")
         else:
             await query.answer("قناة الدعم غير مفتوحة", show_alert=True)
+
 
 
     # الذكاء الاصطناعي فقط للمستخدمين العاديين
