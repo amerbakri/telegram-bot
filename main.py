@@ -213,7 +213,6 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store_user(update.effective_user)
     if not is_valid_url(msg):
         if user_id == ADMIN_ID and user_id in admin_waiting_reply:
-            # رد الأدمن على المستخدم (تجاهل AI هنا)
             user_reply_id = admin_waiting_reply[user_id]
             await context.bot.send_message(user_reply_id, f"📩 رد الأدمن:\n{msg}")
             await update.message.reply_text(f"✅ تم إرسال الرد للمستخدم {user_reply_id}.")
@@ -305,7 +304,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: await loading_msg.delete()
     except: pass
 
-# دعم دردشة (فتح، رد، إغلاق)
 async def support_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -405,6 +403,24 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         except:
             await query.edit_message_text("تم إغلاق لوحة التحكم.", reply_markup=None)
 
+    elif data == "admin_users":
+        await show_users(update, context)
+    elif data == "admin_paidlist":
+        await show_paid_list(update, context)
+    elif data == "admin_broadcast":
+        await broadcast_announcement(update, context)
+    elif data == "admin_stats":
+        await show_stats(update, context)
+    elif data == "admin_back":
+        await admin_panel(update, context)
+    elif data.startswith("cancel_subscribe|"):
+        _, user_id = data.split("|")
+        deactivate_subscription(user_id)
+        await query.edit_message_text(f"✅ تم إلغاء اشتراك المستخدم {user_id}.")
+        try:
+            await context.bot.send_message(chat_id=int(user_id), text="❌ تم إلغاء اشتراكك من قبل الأدمن.")
+        except: pass
+
 async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin_id = update.effective_user.id
 
@@ -419,7 +435,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del admin_waiting_reply[admin_id]
         return
 
-    # أما للمستخدم العادي، استمر في المعالجة AI و فيديو ...
+    # للمستخدم العادي، استمرار المعالجة AI أو فيديو أو غيره
     if update.message.text:
         user_id = update.effective_user.id
         if user_id in open_chats:
@@ -474,7 +490,7 @@ app.add_handler(CommandHandler("admin", admin_panel))
 app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern=r"^(support_reply\|\d+|support_close\|\d+|admin_close|admin_users|admin_broadcast|admin_search|admin_stats|admin_addpaid|admin_paidlist|admin_back|cancel_subscribe\|.+)$"))
 app.add_handler(CallbackQueryHandler(support_button_handler, pattern="^support_(start|end)$"))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, support_message_handler))
-app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), admin_reply_message_handler))
+app.add_handler(MessageHandler(filters.TEXT & filters.User(user_id=ADMIN_ID), media_handler))
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8443))
