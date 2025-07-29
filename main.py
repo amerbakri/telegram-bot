@@ -461,6 +461,10 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
 
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download))
+async def text_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text.strip() == "ادمن":
+        await admin_panel(update, context)
+
 app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^ادمن$"), text_admin_handler))
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 app.add_handler(CallbackQueryHandler(handle_subscription_request, pattern="^subscribe_request$"))
