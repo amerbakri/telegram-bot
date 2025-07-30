@@ -392,8 +392,20 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = q.data
     global admin_broadcast_mode
     if data == "admin_users":
-        count = len(open(USERS_FILE, "r", encoding="utf-8").read().splitlines())
-        await safe_edit(q, f"👥 عدد المستخدمين: {count}")
+        # عرض قائمة المستخدمين مع زر دعم لكل مستخدم
+        users = []
+        try:
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    uid, uname = line.strip().split("|", 1)
+                    users.append((int(uid), uname))
+        except FileNotFoundError:
+            pass
+        buttons = [
+            [InlineKeyboardButton(f"💬 دعم @{uname}", callback_data=f"admin_reply|{uid}")]
+            for uid, uname in users
+        ] or [[InlineKeyboardButton("لا يوجد مستخدمون", callback_data="noop")]]
+        await safe_edit(q, "👥 المستخدمون:", InlineKeyboardMarkup(buttons))
     elif data == "admin_broadcast":
         admin_broadcast_mode = True
         await safe_edit(q, "📝 ارسل نصاً أو وسائط للإعلان:")
