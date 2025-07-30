@@ -341,11 +341,13 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
 
 # ————— Download / Audio-Video button —————
+# ————— Download / Audio-Video button —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     action, quality, msg_id = q.data.split("|")
 
+    # إلغاء الطلب
     if action == "cancel":
         await q.message.delete()
         url_store.pop(msg_id, None)
@@ -359,7 +361,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text("⏳ جاري التحميل...")
 
     outfile = "video.mp4"
-    # إعداد الأمر بناءً على النوع
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -377,32 +378,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         caption = f"🎬 جودة {quality}p"
 
-    # نجرب التحميل أولاً بالصيفة المطلوبة
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        # إذا فشل (عادة بسبب الصيغة غير متوفرة)، نجرب بدون تحديد الصيغة
-        if action != "audio":
-            logger.warning(f"الصيغة {fmt} غير متوفرة، سأعيد المحاولة بأفضل صيغة متاحة. الخطأ: {e}")
-            fallback_cmd = [
-                "yt-dlp", "--cookies", COOKIES_FILE,
-                "-o", outfile, url
-            ]
-            subprocess.run(fallback_cmd, check=True)
-        else:
-            # لو فشل تنزيل الصوت بشكل نهائي نبلغ المستخدم
-            await context.bot.send_message(uid, f"❌ خطأ صوتي أثناء التحميل: {e}")
-            url_store.pop(msg_id, None)
-            return
+        await context.bot.send_message(
+            uid,
+            f"❌ فشل التحميل بالصيفة المطلوبة ({fmt}). حاول جودة أخرى أو رابط مختلف.\n\n{e}"
+        )
+        url_store.pop(msg_id, None)
+        return
 
-    # بعد التحميل نرسل الملف
+    # بعد النجاح، أرسل الملف
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
-    # نظافة الملفات المؤقتة
+    # تنظيف الملفات المؤقتة
     if os.path.exists(outfile):
         os.remove(outfile)
     url_store.pop(msg_id, None)
@@ -410,6 +403,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.delete()
     except:
         pass
+
 
 # ————— Register handlers and start —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
