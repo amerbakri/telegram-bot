@@ -62,14 +62,20 @@ def save_json(path, data):
 def store_user(user):
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w", encoding="utf-8").close()
-    lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
+    # Only keep unique user IDs
+    existing_ids = []
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("|", 1)
+            if parts:
+                existing_ids.append(parts[0])
     entry = f"{user.id}|{user.username or 'NO'}"
-    if str(user.id) not in lines:
+    if str(user.id) not in existing_ids:
         with open(USERS_FILE, "a", encoding="utf-8") as f:
-            f.write(entry + "\n")
+            f.write(entry + "
+")
 
-
-def get_username(uid):
+def get_username(uid):(uid):
     try:
         with open(USERS_FILE, 'r', encoding='utf-8') as f:
             for line in f:
