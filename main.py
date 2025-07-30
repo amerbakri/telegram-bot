@@ -202,6 +202,7 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ————— AI / Video Router —————
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global admin_broadcast_mode
     u=update.effective_user; text=update.message.text.strip()
     if u.id in open_chats:
         await context.bot.send_message(ADMIN_ID,f'من @{get_username(u.id)} ({u.id}):\n{text}',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(f'📝 رد @{get_username(u.id)}',callback_data=f'admin_reply|{u.id}')]])); await update.message.reply_text('✅ أرسلت للأدمن.'); return
