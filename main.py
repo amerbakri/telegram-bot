@@ -36,15 +36,15 @@ open_chats = set()               # user_ids in active support chat
 admin_reply_to = {}              # ADMIN_ID → user_id whom admin will reply to
 admin_broadcast_mode = False     # True when admin is typing a broadcast message
 
+# ————— Quality map updated —————
 quality_map = {
-    "720": "best[height<=720][ext=mp4]",
-    "480": "best[height<=480][ext=mp4]",
-    "360": "best[height<=360][ext=mp4]",
+    "720": "bestvideo[height<=720]+bestaudio/best",
+    "480": "bestvideo[height<=480]+bestaudio/best",
+    "360": "bestvideo[height<=360]+bestaudio/best",
 }
 
 # ————— Helper functions —————
 def load_json(path, default=None):
-    """Load JSON from file or return default."""
     if not os.path.exists(path):
         return default if default is not None else {}
     with open(path, "r", encoding="utf-8") as f:
@@ -54,22 +54,19 @@ def load_json(path, default=None):
             return default if default is not None else {}
 
 def save_json(path, data):
-    """Save JSON data to file."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def store_user(user):
-    """Persist user to USERS_FILE if new."""
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w", encoding="utf-8").close()
     lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
-    entry = f"{user.id}|{user.username or 'NO'}|{user.first_name or ''} {user.last_name or ''}"
+    entry = f"{user.id}|{user.username or 'NO'}|{user.first_name or ''} {user.last_name or ''}".strip()
     if all(str(user.id) not in line for line in lines):
         with open(USERS_FILE, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
 
 def is_valid_url(text):
-    """Check if text is a supported video URL."""
     return re.match(
         r"^(https?://)?(www\.)?"
         r"(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|facebook\.com|fb\.watch)/.+",
@@ -77,27 +74,20 @@ def is_valid_url(text):
     ) is not None
 
 def is_subscribed(uid):
-    """Check if user has active paid subscription."""
     subs = load_json(SUBSCRIPTIONS_FILE, {})
     return str(uid) in subs and subs[str(uid)].get("active", False)
 
 def activate_subscription(uid):
-    """Activate paid subscription for user."""
     subs = load_json(SUBSCRIPTIONS_FILE, {})
     subs[str(uid)] = {"active": True, "date": datetime.utcnow().isoformat()}
     save_json(SUBSCRIPTIONS_FILE, subs)
 
 def deactivate_subscription(uid):
-    """Deactivate paid subscription for user."""
     subs = load_json(SUBSCRIPTIONS_FILE, {})
     subs.pop(str(uid), None)
     save_json(SUBSCRIPTIONS_FILE, subs)
 
 def check_limits(uid, action):
-    """
-    Enforce daily limits for free users.
-    action: "video" or "ai"
-    """
     if is_subscribed(uid):
         return True
     today = datetime.utcnow().strftime("%Y-%m-%d")
@@ -115,16 +105,15 @@ def check_limits(uid, action):
     return True
 
 async def safe_edit(query, text, kb=None):
-    """Try to edit message text without raising."""
     try:
         await query.edit_message_text(text, reply_markup=kb)
-    except Exception:
+    except:
         pass
 
 def fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
-# ————— Command /start —————
+# ————— /start —————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
@@ -135,26 +124,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user.id == ADMIN_ID:
         kb.append([InlineKeyboardButton("🛠️ لوحة الأدمن", callback_data="admin_panel")])
     await update.message.reply_text(
-        "👋 أهلاً! أرسل رابط فيديو أو استفسار AI.\n"
-        f"مجاناً: {DAILY_VIDEO_LIMIT} فيديو و {DAILY_AI_LIMIT} استفسار AI يومياً.\n"
+        f"👋 أهلاً! أرسل رابط فيديو أو استفسار AI.\n"
+        f"مجاناً: {DAILY_VIDEO_LIMIT} فيديو و {DAILY_AI_LIMIT} استفسار يومياً.\n"
         f"مدفوع: 2 دينار عبر أورنج ماني {ORANGE_NUMBER}.",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ————— Limit reached message —————
 async def send_limit_message(update: Update):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")]])
     await update.message.reply_text("🚫 انتهى الحد المجاني.", reply_markup=kb)
 
 # ————— Subscription Handlers —————
 async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User clicks 'اشترك' → send request to admin."""
     u = update.effective_user
     if u.id in pending_subs:
         await update.callback_query.answer("طلبك قيد المراجعة.")
         return
     pending_subs.add(u.id)
-    info = f"📥 طلب اشتراك:\n{fullname(u)} | @{u.username or 'NO'} | ID: {u.id}"
+    info = f"📥 طلب اشتراك: {fullname(u)} | @{u.username or 'NO'} | ID: {u.id}"
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ تفعيل", callback_data=f"confirm_sub|{u.id}"),
         InlineKeyboardButton("❌ رفض", callback_data=f"reject_sub|{u.id}")
@@ -163,15 +150,13 @@ async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.edit_message_text("✅ طلبك أُرسل للأدمن.")
 
 async def confirm_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin approves subscription."""
     _, uid = update.callback_query.data.split("|")
-    activate_subscription(uid)
+    activate_subscription(int(uid))
     pending_subs.discard(int(uid))
     await context.bot.send_message(int(uid), "✅ اشتراكك مفعل!")
     await safe_edit(update.callback_query, "✅ تم التفعيل.")
 
 async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin rejects subscription."""
     _, uid = update.callback_query.data.split("|")
     pending_subs.discard(int(uid))
     await context.bot.send_message(int(uid), "❌ تم رفض طلبك.")
@@ -179,7 +164,6 @@ async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ————— Support Handlers —————
 async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle support start/end buttons."""
     q = update.callback_query
     uid = q.from_user.id
     if q.data == "support_start":
@@ -192,7 +176,6 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "💬 الدعم مفتوح. ارسل رسالتك الآن.",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إغلاق", callback_data="support_end")]])
         )
-        # Notify admin
         await context.bot.send_message(
             ADMIN_ID,
             f"⚠️ دعم جديد من المستخدم {uid}",
@@ -201,54 +184,49 @@ async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("❌ إنهاء", callback_data=f"admin_close|{uid}")
             ]])
         )
-    else:  # support_end
+    else:
         open_chats.discard(uid)
         await q.answer("تم إغلاق الدعم.")
         await q.edit_message_text("❌ تم إغلاق الدعم.")
 
 # ————— Message Router —————
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Routes incoming text messages to:
-    1) support chat
-    2) admin reply
-    3) admin broadcast
-    4) AI chat
-    5) video download
-    """
     u = update.effective_user
     text = update.message.text.strip()
 
-    # 1) If user in support chat → forward to admin
+    # 1) Support chat
     if u.id in open_chats:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📝 رد", callback_data=f"admin_reply|{u.id}")]])
-        await context.bot.send_message(ADMIN_ID, f"من {u.id}:\n{text}", reply_markup=kb)
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"من {u.id}:\n{text}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 رد", callback_data=f"admin_reply|{u.id}")]])
+        )
         await update.message.reply_text("✅ أرسلت للأدمن.")
         return
 
-    # 2) Admin replying to user
+    # 2) Admin replying
     if u.id == ADMIN_ID and ADMIN_ID in admin_reply_to:
         to_id = admin_reply_to.pop(ADMIN_ID)
         await context.bot.send_message(to_id, f"📩 رد الأدمن:\n{text}")
         await update.message.reply_text("✅ تم الإرسال.")
         return
 
-    # 3) Admin broadcast mode
+    # 3) Admin broadcast
     global admin_broadcast_mode
     if u.id == ADMIN_ID and admin_broadcast_mode:
         admin_broadcast_mode = False
-        users = [l.split("|")[0] for l in open(USERS_FILE,"r",encoding="utf-8") if l.strip()]
+        users = [l.split("|")[0] for l in open(USERS_FILE, "r", encoding="utf-8") if l.strip()]
         sent = 0
-        for uid in users:
+        for uid_str in users:
             try:
-                await context.bot.send_message(int(uid), text)
+                await context.bot.send_message(int(uid_str), text)
                 sent += 1
             except:
                 pass
         await update.message.reply_text(f"📢 أرسلت الإعلان إلى {sent} مستخدم.")
         return
 
-    # 4) AI chat for regular users (text that is not URL)
+    # 4) AI chat
     store_user(u)
     if not is_valid_url(text):
         if u.id == ADMIN_ID:
@@ -266,7 +244,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"⚠️ خطأ AI: {e}")
         return
 
-    # 5) Download flow (text is URL)
+    # 5) Video/audio download
     if not check_limits(u.id, "video"):
         await send_limit_message(update)
         return
@@ -325,7 +303,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     data = q.data
     global admin_broadcast_mode
     if data == "admin_users":
-        count = len(open(USERS_FILE,"r",encoding="utf-8").read().splitlines())
+        count = len(open(USERS_FILE, "r", encoding="utf-8").read().splitlines())
         await safe_edit(q, f"👥 عدد المستخدمين: {count}")
     elif data == "admin_broadcast":
         admin_broadcast_mode = True
@@ -334,20 +312,19 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         subs = load_json(SUBSCRIPTIONS_FILE, {})
         txt = "💰 مشتركون مدفوعون:\n" + ("\n".join(subs.keys()) or "لا أحد")
         await safe_edit(q, txt)
-    else:  # close panel
+    else:
         try:
             await q.message.delete()
         except:
             pass
 
 # ————— Download / Audio-Video button —————
-# ————— Download / Audio-Video button —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     action, quality, msg_id = q.data.split("|")
 
-    # إلغاء الطلب
+    # cancel
     if action == "cancel":
         await q.message.delete()
         url_store.pop(msg_id, None)
@@ -388,14 +365,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url_store.pop(msg_id, None)
         return
 
-    # بعد النجاح، أرسل الملف
+    # إرسال الملف
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
-    # تنظيف الملفات المؤقتة
+    # تنظيف
     if os.path.exists(outfile):
         os.remove(outfile)
     url_store.pop(msg_id, None)
@@ -404,11 +381,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-
 # ————— Register handlers and start —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Commands & callbacks
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(subscribe_request,   pattern="^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_sub,         pattern="^confirm_sub\\|"))
@@ -418,9 +393,7 @@ app.add_handler(CallbackQueryHandler(admin_reply_button,  pattern="^admin_reply\
 app.add_handler(CallbackQueryHandler(admin_close_button,  pattern="^admin_close\\|"))
 app.add_handler(CallbackQueryHandler(admin_panel,         pattern="^admin_panel$"))
 app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern="^admin_"))
-# Messages
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
-# Download buttons
 app.add_handler(CallbackQueryHandler(button_handler, pattern="^(video|audio|cancel)\\|"))
 
 if __name__ == "__main__":
