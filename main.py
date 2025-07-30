@@ -113,6 +113,20 @@ async def safe_edit(query, text, kb=None):
 def fullname(user):
     return f"{user.first_name or ''} {user.last_name or ''}".strip()
 
+# helper to get username by uid
+def get_username(uid):
+    """Get stored username for a given user ID from USERS_FILE."""
+    try:
+        with open(USERS_FILE, 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split('|')
+                if len(parts) >= 2 and str(uid) == parts[0]:
+                    return parts[1]
+    except FileNotFoundError:
+        pass
+    return 'NO'
+    return f"{user.first_name or ''} {user.last_name or ''}".strip()
+
 # ————— /start —————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -356,12 +370,25 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         admin_broadcast_mode = True
         await safe_edit(q, "📝 اكتب نص الإعلان أو أرسل صورة/فيديو:")
     elif data == "admin_supports":
-        if not open_chats: await safe_edit(q, "💤 لا توجد محادثات دعم مفتوحة."); return
+        if not open_chats:
+            await safe_edit(q, "💤 لا توجد محادثات دعم مفتوحة.")
+            return
+        # build mapping of uid to username
+        users_map = {}
+        try:
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    parts = line.strip().split('|')
+                    if len(parts) >= 2:
+                        users_map[int(parts[0])] = parts[1]
+        except FileNotFoundError:
+            pass
         buttons = []
         for uid in open_chats:
+            uname = users_map.get(uid, 'NO')
             buttons.append([
-                InlineKeyboardButton(f"📝 رد {uid}", callback_data=f"admin_reply|{uid}"),
-                InlineKeyboardButton(f"❌ إنهاء {uid}", callback_data=f"admin_close|{uid}")
+                InlineKeyboardButton(f"📝 رد @{uname}", callback_data=f"admin_reply|{uid}"),
+                InlineKeyboardButton(f"❌ إنهاء @{uname}", callback_data=f"admin_close|{uid}")
             ])
         await safe_edit(q, "💬 محادثات الدعم المفتوحة:", InlineKeyboardMarkup(buttons))
     elif data == "admin_paidlist":
