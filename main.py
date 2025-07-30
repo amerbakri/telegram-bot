@@ -344,21 +344,22 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
-    data = q.data
-    if "|" not in data:
-        await q.answer("طلب غير صالح."); return
-    action, quality, msg_id = data.split("|")
-    # cancel
+    action, quality, msg_id = q.data.split("|")
+
     if action == "cancel":
-        try: await q.message.delete()
-        except: pass
+        await q.message.delete()
         url_store.pop(msg_id, None)
         return
+
     url = url_store.get(msg_id)
     if not url:
-        await q.answer("انتهت صلاحية الرابط."); return
+        await q.answer("انتهت صلاحية الرابط.")
+        return
+
     await q.edit_message_text("⏳ جاري التحميل...")
+
     outfile = "video.mp4"
+    # إعداد الأمر بناءً على النوع
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -375,21 +376,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "-o", outfile, url
         ]
         caption = f"🎬 جودة {quality}p"
+
+    # نجرب التحميل أولاً بالصيفة المطلوبة
     try:
         subprocess.run(cmd, check=True)
-        with open(outfile, "rb") as f:
-            if action == "audio":
-                await context.bot.send_audio(uid, f, caption=caption)
-            else:
-                await context.bot.send_video(uid, f, caption=caption)
-    except Exception as e:
-        await context.bot.send_message(uid, f"❌ خطأ أثناء التحميل: {e}")
-    finally:
-        if os.path.exists(outfile):
-            os.remove(outfile)
-        url_store.pop(msg_id, None)
-    try: await q.message.delete()
-    except: pass
+    except subprocess.CalledProcessError as e:
+        # إذا فشل (عادة بسبب الصيغة غير متوفرة)، نجرب بدون تحديد الصيغة
+        if action != "audio":
+            logger.warning(f"الصيغة {fmt} غير متوفرة، سأعيد المحاولة بأفضل صيغة متاحة. الخطأ: {e}")
+            fallback_cmd = [
+                "yt-dlp", "--cookies", COOKIES_FILE,
+                "-o", outfile, url
+            ]
+            subprocess.run(fallback_cmd, check=True)
+        else:
+            # لو فشل تنزيل الصوت بشكل نهائي نبلغ المستخدم
+            await context.bot.send_message(uid, f"❌ خطأ صوتي أثناء التحميل: {e}")
+            url_store.pop(msg_id, None)
+            return
+
+    # بعد التحميل نرسل الملف
+    with open(outfile, "rb") as f:
+        if action == "audio":
+            await context.bot.send_audio(uid, f, caption=caption)
+        else:
+            await context.bot.send_video(uid, f, caption=caption)
+
+    # نظافة الملفات المؤقتة
+    if os.path.exists(outfile):
+        os.remove(outfile)
+    url_store.pop(msg_id, None)
+    try:
+        await q.message.delete()
+    except:
+        pass
 
 # ————— Register handlers and start —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
