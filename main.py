@@ -150,6 +150,43 @@ async def send_limit_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=kb
     )
 
+# ————— Subscription Handlers —————
+async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    u = update.effective_user
+    if u.id in pending_subs:
+        await update.callback_query.answer("طلبك قيد المراجعة.")
+        return
+    pending_subs.add(u.id)
+    info = f"📥 طلب اشتراك: @{u.username or 'NO'} | ID: {u.id}"
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ تفعيل", callback_data=f"confirm_sub|{u.id}"),
+            InlineKeyboardButton("❌ رفض", callback_data=f"reject_sub|{u.id}")
+        ]
+    ])
+    await context.bot.send_message(ADMIN_ID, info, reply_markup=kb)
+    await update.callback_query.edit_message_text("✅ طلبك أُرسل للأدمن.")
+
+async def confirm_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _, uid = update.callback_query.data.split("|", 1)
+    activate_subscription(int(uid))
+    pending_subs.discard(int(uid))
+    await context.bot.send_message(int(uid), "✅ اشتراكك مفعل!")
+    await safe_edit(update.callback_query, "✅ تم التفعيل.")
+
+async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    _, uid = update.callback_query.data.split("|", 1)
+    pending_subs.discard(int(uid))
+    await context.bot.send_message(int(uid), "❌ تم رفض طلبك.")
+    await safe_edit(update.callback_query, "🚫 تم الرفض.")
+
+# ————— Continue existing handlers —————]
+    ])
+    await update.message.reply_text(
+        "🚫 انتهى الحد المجاني.",
+        reply_markup=kb
+    )
+
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
