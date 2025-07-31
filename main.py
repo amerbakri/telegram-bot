@@ -180,12 +180,7 @@ async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(int(uid), "❌ تم رفض طلبك.")
     await safe_edit(update.callback_query, "🚫 تم الرفض.")
 
-# ————— Continue existing handlers —————]
-    ])
-    await update.message.reply_text(
-        "🚫 انتهى الحد المجاني.",
-        reply_markup=kb
-    )
+# ————— Continue existing handlers —————
 
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
