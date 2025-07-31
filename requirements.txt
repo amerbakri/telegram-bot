@@ -2,3 +2,5 @@ python-telegram-bot[webhooks]==20.3
 Flask
 yt-dlp
 openai==0.28
+pytesseract
+Pillow
