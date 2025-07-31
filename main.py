@@ -140,7 +140,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def send_limit_message(update: Update):
+async def send_limit_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Notify user that free limit is reached and invite to subscribe."""
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")]
+    ])
+    await update.message.reply_text(
+        "🚫 انتهى الحد المجاني.",
+        reply_markup=kb
+    ):
     keyboard = [
     [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
     [
