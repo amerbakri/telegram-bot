@@ -71,14 +71,18 @@ def store_user(user):
         f.write(entry + "\n")
 
 def get_username(uid: int) -> str:
-    """Return @username or id if not found."""
+    """Return @username or uid string if not found."""
     if not os.path.exists(USERS_FILE):
         return str(uid)
-    for line in open(USERS_FILE, "r", encoding="utf-8").splitlines():
-        parts = line.split("|")
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    for line in lines:
+        parts = line.split("|", 1)
         if parts[0] == str(uid):
+            # parts[1] is the username field
             return f"@{parts[1]}" if parts[1] != "NO" else str(uid)
     return str(uid)
+
 
 def is_valid_url(text: str) -> bool:
     return re.match(
