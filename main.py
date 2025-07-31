@@ -4,9 +4,8 @@ import subprocess
 import re
 import logging
 import asyncio
-import functools
-from datetime import datetime, timezone
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import functoolsfrom datetime import datetime, timezone, timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
