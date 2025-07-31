@@ -148,20 +148,8 @@ async def send_limit_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         "🚫 انتهى الحد المجاني.",
         reply_markup=kb
-    ):
-    keyboard = [
-    [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
-    [
-        InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"),
-        InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{msg_id}"),
-        InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{msg_id}")
-    ],
-    [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
-]
-kb = InlineKeyboardMarkup(keyboard)
-await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb))
+    )
 
-# ————— Admin reply/close buttons —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
