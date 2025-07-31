@@ -64,13 +64,21 @@ def save_json(path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def store_user(user):
+    # إذا لم يوجد ملف المستخدمين، ننشئه فارغاً
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w", encoding="utf-8").close()
-    lines = open(USERS_FILE, "r", encoding="utf-8").splitlines()
-    if not any(line.split("|",1)[0] == str(user.id) for line in lines):
+    # نقرأ محتوى الملف كاملاً
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        content = f.read()
+    # نقسم النص إلى أسطر
+    lines = content.splitlines()
+    # إذا لم يكن المستخدم موجوداً مسبقاً
+    if not any(line.split("|", 1)[0] == str(user.id) for line in lines):
         entry = f"{user.id}|{user.username or 'NO'}|{user.first_name or ''} {user.last_name or ''}".strip()
+        # نضيف السطر الجديد
         with open(USERS_FILE, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
+
 
 def is_valid_url(text):
     return re.match(
