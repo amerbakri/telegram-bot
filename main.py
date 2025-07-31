@@ -141,146 +141,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_limit_message(update: Update):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")]])
-    await update.message.reply_text("🚫 انتهى الحد المجاني.", reply_markup=kb)
-
-# ————— Subscription Handlers —————
-async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    if u.id in pending_subs:
-        await update.callback_query.answer("طلبك قيد المراجعة.")
-        return
-    pending_subs.add(u.id)
-    info = f"📥 طلب اشتراك: {fullname(u)} | @{u.username or 'NO'} | ID: {u.id}"
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ تفعيل", callback_data=f"confirm_sub|{u.id}"),
-        InlineKeyboardButton("❌ رفض", callback_data=f"reject_sub|{u.id}")
-    ]])
-    await context.bot.send_message(ADMIN_ID, info, reply_markup=kb)
-    await update.callback_query.edit_message_text("✅ طلبك أُرسل للأدمن.")
-
-
-async def confirm_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, uid = update.callback_query.data.split("|")
-    activate_subscription(int(uid))
-    pending_subs.discard(int(uid))
-    await context.bot.send_message(int(uid), "✅ اشتراكك مفعل!")
-    await safe_edit(update.callback_query, "✅ تم التفعيل.")
-
-
-async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    _, uid = update.callback_query.data.split("|")
-    pending_subs.discard(int(uid))
-    await context.bot.send_message(int(uid), "❌ تم رفض طلبك.")
-    await safe_edit(update.callback_query, "🚫 تم الرفض.")
-
-# ————— Support Handlers —————
-async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    uid = q.from_user.id
-    if q.data == "support_start":
-        if uid in open_chats:
-            await q.answer("الدعم مفتوح بالفعل.")
-            return
-        open_chats.add(uid)
-        await q.answer("تم فتح الدعم.")
-        await q.edit_message_text(
-            "💬 الدعم مفتوح. ارسل رسالتك الآن.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ إغلاق", callback_data="support_end")]])
-        )
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"⚠️ دعم جديد من المستخدم {uid}",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("📝 رد", callback_data=f"admin_reply|{uid}"),
-                InlineKeyboardButton("❌ إنهاء", callback_data=f"admin_close|{uid}")
-            ]])
-        )
-    else:
-        open_chats.discard(uid)
-        await q.answer("تم إغلاق الدعم.")
-        await q.edit_message_text("❌ تم إغلاق الدعم.")
-
-# ————— Support media router —————
-async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if user.id in open_chats:
-        await update.message.forward(chat_id=ADMIN_ID)
-        await update.message.reply_text("✅ أرسلت للأدمن.")
-
-# ————— Message Router —————
-async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    text = update.message.text.strip()
-
-    # 1) Support chat
-    if u.id in open_chats:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"من {u.id}:\n{text}",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 رد", callback_data=f"admin_reply|{u.id}")]])
-        )
-        await update.message.reply_text("✅ أرسلت للأدمن.")
-        return
-
-    # 2) Admin replying
-    if u.id == ADMIN_ID and ADMIN_ID in admin_reply_to:
-        to_id = admin_reply_to.pop(ADMIN_ID)
-        await context.bot.send_message(to_id, f"📩 رد الأدمن:\n{text}")
-        await update.message.reply_text("✅ تم الإرسال.")
-        return
-
-    # 3) Admin broadcast
-    global admin_broadcast_mode
-    if u.id == ADMIN_ID and admin_broadcast_mode:
-        admin_broadcast_mode = False
-        lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
-        sent = 0
-        for line in lines:
-            uid_str, _, _ = line.split("|", 2)
-            try:
-                await context.bot.send_message(int(uid_str), text)
-                sent += 1
-            except:
-                pass
-        await update.message.reply_text(f"📢 أرسلت الإعلان إلى {sent} مستخدم.")
-        return
-
-    # 4) AI chat
-    store_user(u)
-    if not is_valid_url(text):
-        if u.id == ADMIN_ID:
-            return
-        if not check_limits(u.id, "ai"):
-            await send_limit_message(update)
-            return
-        try:
-            res = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role":"user","content":text}]
-            )
-            await update.message.reply_text(res.choices[0].message.content)
-        except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
-        return
-
-    # 5) Video/audio download
-    if not check_limits(u.id, "video"):
-        await send_limit_message(update)
-        return
-
-    msg_id = str(update.message.message_id)
-    url_store[msg_id] = text
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{msg_id}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{msg_id}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
-    ])
-    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=InlineKeyboardMarkup(kb))
+    keyboard = [
+    [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
+    [
+        InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"),
+        InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{msg_id}"),
+        InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{msg_id}")
+    ],
+    [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
+]
+kb = InlineKeyboardMarkup(keyboard)
+await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb))
 
 # ————— Admin reply/close buttons —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
