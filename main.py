@@ -473,24 +473,33 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = InlineKeyboardMarkup(back)
         await safe_edit(q, txt, kb)
 
-    elif data == "admin_stats":with open(USERS_FILE, "r", encoding="utf-8") as f:
-    content = f.read()
-lines = content.splitlines()
-users = len(lines)
-        paid = len(load_subs())
-        supports = len(open_chats)
-        # advanced stats
-        limits = load_json(LIMITS_FILE, {})
-        total_v = sum(u.get("video",0) for u in limits.values())
-        total_ai = sum(u.get("ai",0) for u in limits.values())
-        txt = (
-            f"📊 إحصائيات متقدمة:\n"
-            f"• مستخدمون: {users}\n"
-            f"• مدفوعين: {paid}\n"
-            f"• دعم مفتوح: {supports}\n"
-            f"• تحميلات اليوم: {total_v}\n"
-            f"• استفسارات AI اليوم: {total_ai}"
-        )
+elif data == "admin_stats":
+    # قراءة المستخدمين
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    total_users = len(lines)
+
+    # مشتركون مدفوعون
+    total_paid = len(load_subs())
+
+    # محادثات الدعم المفتوحة
+    total_supports = len(open_chats)
+
+    # إحصائيات متقدمة: تحميلات اليوم واستفسارات AI
+    limits = load_json(LIMITS_FILE, {})
+    total_v = sum(u.get("video", 0) for u in limits.values())
+    total_ai = sum(u.get("ai", 0) for u in limits.values())
+
+    stats_text = (
+        f"📊 إحصائيات متقدمة:\n"
+        f"• عدد المستخدمين: {total_users}\n"
+        f"• مدفوعون: {total_paid}\n"
+        f"• دعم مفتوح: {total_supports}\n"
+        f"• تحميلات اليوم: {total_v}\n"
+        f"• استفسارات AI اليوم: {total_ai}"
+    )
+    await safe_edit(q, stats_text, InlineKeyboardMarkup(back))
+
         kb = InlineKeyboardMarkup(back)
         await safe_edit(q, txt, kb)
 
