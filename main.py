@@ -415,10 +415,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # أرسل رسالة تحميل فورية
+    # اختر اسم ملف وممتده
+    if action == "audio":
+        outfile = f"{msg_id}.mp3"
+    else:
+        outfile = f"{msg_id}.mp4"
+
+    # أرسل رسالة فوراً
     await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
 
-    outfile = "video.mp4"
+    # بناء الأمر
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -432,30 +438,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
         caption = f"🎬 جودة {quality}p"
 
-    # شغّل الأمر في Thread Pool
-    func = functools.partial(subprocess.run, cmd, check=True)
+    # شغّل التحميل بدون حجز البوت
+    runner = functools.partial(subprocess.run, cmd, check=True)
     try:
-        await asyncio.get_running_loop().run_in_executor(None, func)
+        await asyncio.get_running_loop().run_in_executor(None, runner)
     except subprocess.CalledProcessError as e:
         await context.bot.send_message(
             uid,
-            f"❌ فشل التحميل بالصيفة المطلوبة ({fmt if action=='video' else 'audio'}).\n{e}"
+            f"❌ فشل التحميل: {e}"
         )
         url_store.pop(msg_id, None)
         return
 
-    # بعد انتهاء التحميل، أرسل الملف
+    # أرسل الملف الصحيح حسب الامتداد
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
+    # نظّف
     os.remove(outfile)
     url_store.pop(msg_id, None)
-    # نظف رسالة "جاري التحميل"
-    try: await q.message.delete()
-    except: pass
+    try: 
+        await q.message.delete()
+    except: 
+        pass
 
 
 # ————— Admin Handlers —————
