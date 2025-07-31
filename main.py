@@ -473,8 +473,10 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         kb = InlineKeyboardMarkup(back)
         await safe_edit(q, txt, kb)
 
-    elif data == "admin_stats":
-        users = len(open(USERS_FILE, "r", encoding="utf-8").splitlines())
+    elif data == "admin_stats":with open(USERS_FILE, "r", encoding="utf-8") as f:
+    content = f.read()
+lines = content.splitlines()
+users = len(lines)
         paid = len(load_subs())
         supports = len(open_chats)
         # advanced stats
