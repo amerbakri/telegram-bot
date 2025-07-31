@@ -3,6 +3,8 @@ import json
 import subprocess
 import re
 import logging
+import asyncio
+import functools
 from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
