@@ -146,59 +146,71 @@ async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception while handling update:", exc_info=context.error)
 
 # ————— /start —————
+# ————— مدة الاشتراك بالأيام —————
+SUB_DURATION_DAYS = 30
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
-    # Admin menu
+    # --- الأدمن ---
     if user.id == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-            [InlineKeyboardButton("📢 إعلان", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("📢 إعلان",         callback_data="admin_broadcast")],
             [InlineKeyboardButton("💬 محادثات الدعم", callback_data="admin_supports")],
-            [InlineKeyboardButton("🟢 مدفوعين", callback_data="admin_paidlist")],
+            [InlineKeyboardButton("🟢 مدفوعين",       callback_data="admin_paidlist")],
             [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_stats")],
-            [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")],
+            [InlineKeyboardButton("❌ إغلاق",         callback_data="admin_panel_close")],
         ]
         kb = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:", 
+            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات أدناه:",
             reply_markup=kb, parse_mode="Markdown"
         )
         return
 
-    # Regular user menu
+    # --- المستخدم المشترك ---
     if is_subscribed(user.id):
-        subs = load_subs()
-        date_iso = subs[str(user.id)]["date"]
-        days = (datetime.now(timezone.utc) - datetime.fromisoformat(date_iso)).days
-        if days == 0:
+        subs      = load_subs()
+        date_iso  = subs[str(user.id)]["date"]
+        activated = datetime.fromisoformat(date_iso)
+        expiry    = activated + timedelta(days=SUB_DURATION_DAYS)
+        now       = datetime.now(timezone.utc)
+        days_left = (expiry - now).days
+
+        if days_left > 0:
             text = (
-                "🎉 *تم تفعيل اشتراكك اليوم!* 🎉\n"
-                "استمتع بكامل ميزات البوت بدون حدود يومية.\n\n"
-                "💬 اضغط دعم لأي مساعدة."
+                f"✅ اشتراكك ساري لمدّة **{days_left}** يوم إضافي.\n\n"
+                "استمتع الآن بكل ميزات البوت دون حدود يومية 🎉\n"
+                "💬 لأي استفسار اضغط زر الدعم أدناه."
             )
         else:
             text = (
-                f"✅ *اشتراكك مفعل منذ {days} يوم*\n"
-                "لا حدود اليوم. استمتع!\n\n"
-                "💬 اضغط دعم إذا احتجت."
+                "⚠️ انتهت مدّة اشتراكك.\n\n"
+                "🔓 لإعادة الاشتراك، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
+                f"➡️ `{ORANGE_NUMBER}`\n\n"
+                "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
             )
+
         keyboard = [[InlineKeyboardButton("💬 دعم", callback_data="support_start")]]
+
+    # --- المستخدم غير المشترك ---
     else:
         text = (
             "👋 *مرحباً في بوت التحميل والـ AI!*\n\n"
-            f"🔓 للاشتراك بدون حدود يومية، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
+            f"🔓 للاشتراك الكامل (بدون حدود يومية)، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
             f"➡️ `{ORANGE_NUMBER}`\n\n"
             "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
         )
         keyboard = [
             [InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")],
-            [InlineKeyboardButton("💬 دعم", callback_data="support_start")],
+            [InlineKeyboardButton("💬 دعم",     callback_data="support_start")],
         ]
 
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+
 
 # ————— Subscription —————
 async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
