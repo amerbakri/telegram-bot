@@ -14,8 +14,14 @@ from telegram.ext import (
     filters
 )
 import openai
-import pytesseract
-from PIL import Image
+
+# Optional OCR support
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
 
 # ————— Logging —————
 logging.basicConfig(level=logging.INFO)
@@ -23,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 # ————— Configuration —————
 ADMIN_ID = 337597459
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "ضع_توكن_البوت_هنا"
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or "ضع_مفتاح_OPENAI_هنا"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "ضع_توكن_البوت_هنا")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "ضع_مفتاح_OPENAI_هنا")
 COOKIES_FILE = "cookies.txt"
 USERS_FILE = "users.txt"
 SUBSCRIPTIONS_FILE = "subscriptions.json"
@@ -49,7 +55,7 @@ quality_map = {
     "360": "bestvideo[height<=360]+bestaudio/best",
 }
 
-# ————— Helpers —————
+# ————— Helper Functions —————
 def load_json(path, default=None):
     if not os.path.exists(path):
         return default or {}
@@ -64,21 +70,15 @@ def save_json(path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def store_user(user):
-    # إذا لم يوجد ملف المستخدمين، ننشئه فارغاً
     if not os.path.exists(USERS_FILE):
         open(USERS_FILE, "w", encoding="utf-8").close()
-    # نقرأ محتوى الملف كاملاً
     with open(USERS_FILE, "r", encoding="utf-8") as f:
         content = f.read()
-    # نقسم النص إلى أسطر
     lines = content.splitlines()
-    # إذا لم يكن المستخدم موجوداً مسبقاً
-    if not any(line.split("|", 1)[0] == str(user.id) for line in lines):
+    if not any(line.split("|",1)[0] == str(user.id) for line in lines):
         entry = f"{user.id}|{user.username or 'NO'}|{user.first_name or ''} {user.last_name or ''}".strip()
-        # نضيف السطر الجديد
         with open(USERS_FILE, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
-
 
 def is_valid_url(text):
     return re.match(
@@ -139,14 +139,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
-    # Admin menu directly on /start
+    # Admin sees full menu immediately
     if user.id == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
             [InlineKeyboardButton("📢 إعلان", callback_data="admin_broadcast")],
             [InlineKeyboardButton("💬 محادثات الدعم", callback_data="admin_supports")],
             [InlineKeyboardButton("🟢 مدفوعين", callback_data="admin_paidlist")],
-            [InlineKeyboardButton("📊 احصائيات متقدمة", callback_data="admin_stats")],
+            [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_stats")],
             [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")],
         ]
         kb = InlineKeyboardMarkup(keyboard)
@@ -171,12 +171,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=kb)
 
-# ————— Subscription —————
+# ————— Subscription Handlers —————
 async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     u = q.from_user
-    logger.info(f"subscribe_request from {u.id}")
     if u.id in pending_subs:
         await q.answer("طلبك قيد المراجعة.")
         return
@@ -208,26 +207,29 @@ async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ————— OCR Handler —————
 async def ocr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Trigger: user sends photo with caption "/ocr" or "استخراج نص"
+    if not OCR_AVAILABLE:
+        await update.message.reply_text("⚠️ OCR غير متاح.")
+        return
     if not update.message.photo:
         return
     photo = update.message.photo[-1]
     file = await photo.get_file()
     path = f"/tmp/{photo.file_unique_id}.jpg"
-    file.download(path)
+    await file.download(path)
     try:
         text = pytesseract.image_to_string(Image.open(path), lang="ara+eng")
         await update.message.reply_text(f"📄 النص المستخرج:\n{text}")
     except Exception as e:
-        await update.message.reply_text(f"⚠️ خطأ في استخراج النص: {e}")
+        await update.message.reply_text(f"⚠️ خطأ في OCR: {e}")
     finally:
         if os.path.exists(path):
             os.remove(path)
 
-# ————— Support —————
+# ————— Support Handlers —————
 async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; uid = q.from_user.id
+    q = update.callback_query
     await q.answer()
+    uid = q.from_user.id
     if q.data == "support_start":
         if uid in open_chats:
             await q.answer("الدعم مفتوح بالفعل.")
@@ -258,7 +260,7 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
     global admin_broadcast_mode
     if u.id == ADMIN_ID and admin_broadcast_mode:
         admin_broadcast_mode = False
-        lines = open(USERS_FILE, "r", encoding="utf-8").splitlines()
+        lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
         sent = 0
         if update.message.photo:
             media = update.message.photo[-1].file_id
@@ -284,7 +286,7 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_broadcast_mode
     u = update.effective_user
-    text = update.message.text.strip()
+    text = (update.message.text or "").strip()
 
     # 1) Support chat
     if u.id in open_chats:
@@ -296,7 +298,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ أرسلت للأدمن.")
         return
 
-    # 2) Admin replying to user
+    # 2) Admin reply to user
     if u.id == ADMIN_ID and ADMIN_ID in admin_reply_to:
         to_id = admin_reply_to.pop(ADMIN_ID)
         await context.bot.send_message(to_id, f"📩 رد الأدمن:\n{text}")
@@ -306,7 +308,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 3) Admin broadcast text
     if u.id == ADMIN_ID and admin_broadcast_mode and not getattr(update.message, "media_group_id", None):
         admin_broadcast_mode = False
-        lines = open(USERS_FILE, "r", encoding="utf-8").splitlines()
+        lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
         sent = 0
         for l in lines:
             try:
@@ -317,11 +319,9 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📢 أرسلت الإعلان إلى {sent} مستخدم.")
         return
 
-    # 4) AI or Download
+    # 4) AI chat
     store_user(u)
-    if not is_valid_url(text):
-        if u.id == ADMIN_ID:
-            return
+    if text and not is_valid_url(text):
         if not check_limits(u.id, "ai"):
             await update.message.reply_text("🚫 انتهى الحد المجاني.")
             return
@@ -336,28 +336,29 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 5) Video download
-    if not check_limits(u.id, "video"):
-        await update.message.reply_text("🚫 انتهى الحد المجاني.")
-        return
-
-    msg_id = str(update.message.message_id)
-    url_store[msg_id] = text
-    keyboard = [
-        [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
-        [
-            InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"),
-            InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{msg_id}"),
-            InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{msg_id}")
-        ],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
-    ]
-    kb = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
+    if is_valid_url(text):
+        if not check_limits(u.id, "video"):
+            await update.message.reply_text("🚫 انتهى الحد المجاني.")
+            return
+        msg_id = str(update.message.message_id)
+        url_store[msg_id] = text
+        keyboard = [
+            [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
+            [
+                InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"),
+                InlineKeyboardButton("🎥 480p", callback_data=f"video|480|{msg_id}"),
+                InlineKeyboardButton("🎥 360p", callback_data=f"video|360|{msg_id}")
+            ],
+            [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
+        ]
+        kb = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("اختر الجودة أو صوت فقط:", reply_markup=kb)
 
 # ————— Download Handler —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; uid = q.from_user.id
+    q = update.callback_query
     await q.answer()
+    uid = q.from_user.id
     action, quality, msg_id = q.data.split("|",2)
 
     if action == "cancel":
@@ -373,7 +374,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await q.edit_message_text("⏳ جاري التحميل...")
     outfile = "video.mp4"
-
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -390,10 +390,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        await context.bot.send_message(
-            uid,
-            f"❌ فشل التحميل بالصيفة المطلوبة ({fmt}). حاول جودة أخرى أو رابط مختلف.\n{e}"
-        )
+        await context.bot.send_message(uid, f"❌ فشل التحميل: {e}")
         url_store.pop(msg_id, None)
         return
 
@@ -402,7 +399,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
-
     if os.path.exists(outfile):
         os.remove(outfile)
     url_store.pop(msg_id, None)
@@ -430,7 +426,6 @@ async def admin_close_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await safe_edit(q, f"تم إغلاق دعم {uid}.")
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # reroute to start
     await start(update, context)
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -438,42 +433,48 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await q.answer()
     if q.from_user.id != ADMIN_ID:
         return
-
     data = q.data
     back = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
 
-    # أول فرع: admin_users
     if data == "admin_users":
-        # … كود عرض المستخدمين …
-        kb = InlineKeyboardMarkup(back)
-        await safe_edit(q, "👥 عدد المستخدمين: …", kb)
+        lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
+        buttons = [[InlineKeyboardButton(f"💬 دعم @{l.split('|')[1]}", callback_data=f"admin_reply|{l.split('|')[0]}")] for l in lines]
+        kb = InlineKeyboardMarkup(buttons + back)
+        await safe_edit(q, f"👥 عدد المستخدمين: {len(lines)}", kb)
 
-    # فرع إعلان البث
     elif data == "admin_broadcast":
-        # … كود البث …
-        await safe_edit(q, "📝 أرسل نص للإعلان", InlineKeyboardMarkup(back))
+        global admin_broadcast_mode
+        admin_broadcast_mode = True
+        kb = InlineKeyboardMarkup(back)
+        await safe_edit(q, "📝 أرسل نص/وسائط للإعلان ثم اضغط رجوع.", kb)
 
-    # فرع محادثات الدعم
     elif data == "admin_supports":
-        # … كود دعم المحادثات …
-        await safe_edit(q, "💬 محادثات الدعم …", InlineKeyboardMarkup(back))
+        if not open_chats:
+            kb = InlineKeyboardMarkup(back)
+            await safe_edit(q, "💤 لا توجد محادثات دعم مفتوحة.", kb)
+            return
+        buttons = [[InlineKeyboardButton(f"📝 رد {uid}", callback_data=f"admin_reply|{uid}"),
+                    InlineKeyboardButton(f"❌ إنهاء {uid}", callback_data=f"admin_close|{uid}")]
+                   for uid in open_chats]
+        kb = InlineKeyboardMarkup(buttons + back)
+        await safe_edit(q, "💬 محادثات الدعم:", kb)
 
-    # فرع قائمة المدفوعين
     elif data == "admin_paidlist":
-        # … كود المدفوعين …
-        await safe_edit(q, "💰 مشتركون مدفوعون …", InlineKeyboardMarkup(back))
+        subs = load_subs().keys()
+        text = "💰 مشتركون مدفوعون:\n" + ("\n".join(subs) if subs else "لا أحد")
+        kb = InlineKeyboardMarkup(back)
+        await safe_edit(q, text, kb)
 
-    # فرع الإحصائيات المتقدمة
     elif data == "admin_stats":
-        # قراءة عدد المستخدمين
+        # قراءة المستخدمين
         with open(USERS_FILE, "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
         total_users = len(lines)
         total_paid = len(load_subs())
         total_supports = len(open_chats)
         limits = load_json(LIMITS_FILE, {})
-        total_v = sum(u.get("video",0) for u in limits.values())
-        total_ai = sum(u.get("ai",0) for u in limits.values())
+        total_v = sum(u.get("video", 0) for u in limits.values())
+        total_ai = sum(u.get("ai", 0) for u in limits.values())
 
         stats_text = (
             f"📊 إحصائيات متقدمة:\n"
@@ -485,7 +486,6 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         await safe_edit(q, stats_text, InlineKeyboardMarkup(back))
 
-    # الفرع الافتراضي: إغلاق اللوحة
     else:
         try:
             await q.message.delete()
@@ -495,33 +495,30 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 # ————— Register & Start —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+# Commands
 app.add_handler(CommandHandler("start", start))
 
-app.add_handler(CallbackQueryHandler(subscribe_request,      pattern=r"^subscribe_request$"))
-app.add_handler(CallbackQueryHandler(confirm_sub,            pattern=r"^confirm_sub\|"))
-app.add_handler(CallbackQueryHandler(reject_sub,             pattern=r"^reject_sub\|"))
-app.add_handler(CallbackQueryHandler(support_button,         pattern=r"^support_(start|end)$"))
-app.add_handler(CallbackQueryHandler(admin_reply_button,     pattern=r"^admin_reply\|"))
-app.add_handler(CallbackQueryHandler(admin_close_button,     pattern=r"^admin_close\|"))
-app.add_handler(CallbackQueryHandler(admin_panel,            pattern=r"^admin_panel$"))
-app.add_handler(CallbackQueryHandler(admin_panel_callback,   pattern=r"^admin_"))
-app.add_handler(CallbackQueryHandler(button_handler,         pattern=r"^(video|audio|cancel)\|"))
+# Callbacks
+app.add_handler(CallbackQueryHandler(subscribe_request,    pattern=r"^subscribe_request$"))
+app.add_handler(CallbackQueryHandler(confirm_sub,          pattern=r"^confirm_sub\|"))
+app.add_handler(CallbackQueryHandler(reject_sub,           pattern=r"^reject_sub\|"))
+app.add_handler(CallbackQueryHandler(support_button,       pattern=r"^support_(start|end)$"))
+app.add_handler(CallbackQueryHandler(admin_reply_button,   pattern=r"^admin_reply\|"))
+app.add_handler(CallbackQueryHandler(admin_close_button,   pattern=r"^admin_close\|"))
+app.add_handler(CallbackQueryHandler(admin_panel,          pattern=r"^admin_panel$"))
+app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^admin_"))
+app.add_handler(CallbackQueryHandler(button_handler,       pattern=r"^(video|audio|cancel)\|"))
 
-# OCR before support media router
-app.add_handler(MessageHandler(
-    filters.PHOTO & filters.CaptionRegex(r"^(استخراج نص|/ocr)"),
-    ocr_handler
-))
+# Message Handlers
+if OCR_AVAILABLE:
+    app.add_handler(MessageHandler(
+        (filters.PHOTO & filters.CaptionRegex(r"^(استخراج نص|/ocr)")),
+        ocr_handler
+    ))
+app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, support_media_router))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
 
-app.add_handler(MessageHandler(
-    (filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
-    support_media_router
-))
-app.add_handler(MessageHandler(
-    filters.TEXT & ~filters.COMMAND,
-    message_router
-))
-
+# Error handler
 app.add_error_handler(error_handler)
 
 if __name__ == "__main__":
