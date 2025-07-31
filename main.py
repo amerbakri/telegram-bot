@@ -400,10 +400,11 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ————— Download Handler —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; uid = q.from_user.id
+    q = update.callback_query
+    uid = q.from_user.id
     await q.answer()
-    action, quality, msg_id = q.data.split("|",2)
 
+    action, quality, msg_id = q.data.split("|", 2)
     if action == "cancel":
         await q.message.delete()
         url_store.pop(msg_id, None)
@@ -414,9 +415,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    await q.edit_message_text("⏳ جاري التحميل...")
-    outfile = "video.mp4"
+    # أرسل رسالة تحميل فورية
+    await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
 
+    outfile = "video.mp4"
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -430,16 +432,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
         caption = f"🎬 جودة {quality}p"
 
+    # شغّل الأمر في Thread Pool
+    func = functools.partial(subprocess.run, cmd, check=True)
     try:
-        subprocess.run(cmd, check=True)
+        await asyncio.get_running_loop().run_in_executor(None, func)
     except subprocess.CalledProcessError as e:
         await context.bot.send_message(
             uid,
-            f"❌ فشل التحميل بالصيفة المطلوبة ({fmt}). حاول قائمة أخرى أو رابط مختلف.\n\n{e}"
+            f"❌ فشل التحميل بالصيفة المطلوبة ({fmt if action=='video' else 'audio'}).\n{e}"
         )
         url_store.pop(msg_id, None)
         return
 
+    # بعد انتهاء التحميل، أرسل الملف
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
@@ -448,8 +453,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     os.remove(outfile)
     url_store.pop(msg_id, None)
+    # نظف رسالة "جاري التحميل"
     try: await q.message.delete()
     except: pass
+
 
 # ————— Admin Handlers —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
