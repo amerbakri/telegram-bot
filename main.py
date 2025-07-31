@@ -387,8 +387,20 @@ async def admin_close_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await context.bot.send_message(int(uid), "❌ أُغلق الدعم.")
     await safe_edit(q, f"تم إغلاق دعم {uid}.")
 
+# ————— Admin panel callback —————
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
+    q = update.callback_query
+    # نبني لوحة الأدمن مباشرة
+    keyboard = [
+        [InlineKeyboardButton("👥 عدد المستخدمين",    callback_data="admin_users")],
+        [InlineKeyboardButton("📢 إعلان",             callback_data="admin_broadcast")],
+        [InlineKeyboardButton("💬 محادثات الدعم",     callback_data="admin_supports")],
+        [InlineKeyboardButton("🟢 مدفوعين",          callback_data="admin_paidlist")],
+        [InlineKeyboardButton("📊 إحصائيات",         callback_data="admin_stats")],
+        [InlineKeyboardButton("❌ إغلاق",            callback_data="admin_panel_close")],
+    ]
+    await q.edit_message_text("اختر من القائمة:", reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
