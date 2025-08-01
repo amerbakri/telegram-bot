@@ -38,6 +38,13 @@ DAILY_AI_LIMIT = 5
 
 openai.api_key = OPENAI_API_KEY
 
+# ————— Quality map —————
+quality_map = {
+    "720": "bestvideo[height<=720]+bestaudio/best",
+    "480": "bestvideo[height<=480]+bestaudio/best",
+    "360": "bestvideo[height<=360]+bestaudio/best",
+}
+
 # ————— State —————
 url_store = {}             # msg_id → URL
 pending_subs = set()       # awaiting approval
@@ -114,13 +121,31 @@ async def safe_edit(q, text, kb=None):
     try: await q.edit_message_text(text, reply_markup=kb)
     except: pass
 
-# ————— Eye-animation helper —————
-async def animate_eyes(msg, stop_event):
+# ———— جلب الجودات المتوفرة فعلياً ————
+async def get_available_formats(url):
+    formats = []
+    try:
+        with yt_dlp.YoutubeDL({"quiet": True, "cookies": COOKIES_FILE}) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if "formats" in info:
+                for f in info["formats"]:
+                    if f.get("vcodec") != "none" and f.get("acodec") != "none":
+                        if f.get("height"):
+                            formats.append(str(f["height"]))
+                formats = sorted(set(formats), key=lambda x: int(x), reverse=True)
+            return formats
+    except Exception as e:
+        return []
+
+# ———— عيون متحركة أثناء التحميل ————
+async def animate_eyes(message, stop_event):
     frames = ["👀↻", "↻👀", "👀↺", "↺👀"]
     i = 0
     while not stop_event.is_set():
-        try: await msg.edit_text(frames[i % len(frames)] + " جاري التحميل في الخلفية...")
-        except: pass
+        try:
+            await message.edit_text(frames[i % len(frames)] + " جاري التحميل...")
+        except:
+            pass
         i += 1
         await asyncio.sleep(0.5)
 
@@ -143,6 +168,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await update.message.reply_text("🛠️ *لوحة تحكم الأدمن*", reply_markup=kb, parse_mode="Markdown")
         return
+    # user menu
     if is_subscribed(user.id):
         date = load_subs()[str(user.id)]["date"][:10]
         text = f"✅ اشتراكك مفعل منذ {date}"
@@ -236,9 +262,8 @@ async def support_media_router(update, context):
                     await context.bot.send_photo(uid, update.message.photo[-1].file_id, caption=update.message.caption or "")
                 elif update.message.video:
                     await context.bot.send_video(uid, update.message.video.file_id, caption=update.message.caption or "")
-                elif update.message.text:
-                    await context.bot.send_message(uid, update.message.text)
             except: pass
+        return
 
 # ————— Message Router —————
 async def message_router(update, context):
@@ -268,43 +293,109 @@ async def message_router(update, context):
             return await msg.reply_text(res.choices[0].message.content)
         except Exception as e:
             return await msg.reply_text(f"⚠️ AI خطأ: {e}")
+    # download menu
     if not check_limits(u.id, "video"): return await msg.reply_text("🚫 انتهى حد الفيديو.")
     msg_id = str(msg.message_id)
     url_store[msg_id] = text
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎥 فيديو", callback_data=f"video|best|{msg_id}"), InlineKeyboardButton("🎵 صوت", callback_data=f"audio|best|{msg_id}")],
-        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
-    ])
+
+    # --- جلب الجودات الفعلية ---
+    await msg.reply_text("🔍 جاري جلب الجودات المتاحة ...")
+    formats = await get_available_formats(text)
+    keyboard = []
+    if formats:
+        row = []
+        for q in ["720", "480", "360"]:
+            if q in formats:
+                row.append(InlineKeyboardButton(f"🎥 {q}p", callback_data=f"video|{q}|{msg_id}"))
+        if row:
+            keyboard.append(row)
+    keyboard.insert(0, [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")])
+    keyboard.append([InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")])
+    kb = InlineKeyboardMarkup(keyboard)
     await msg.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
 async def button_handler(update, context):
-    q = update.callback_query; await q.answer(); uid = q.from_user.id
-    action, quality, msg_id = q.data.split("|",2)
+    q = update.callback_query
+    uid = q.from_user.id
+    await q.answer()
+
+    action, quality, msg_id = q.data.split("|", 2)
     if action == "cancel":
+        await q.message.delete()
         url_store.pop(msg_id, None)
-        return await q.message.delete()
+        return
+
     url = url_store.get(msg_id)
-    if not url: return await q.answer("⚠️ انتهى.")
-    stop_evt = asyncio.Event()
-    task = asyncio.create_task(animate_eyes(q.message, stop_evt))
-    out_suffix = ".mp4" if action=="video" else ".mp3"
-    out = f"{msg_id}{out_suffix}"
-    fmt = quality if action=="audio" else f"bestvideo[height<={quality}]+bestaudio/best"
-    cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", out, url]
+    if not url:
+        await q.answer("⚠️ انتهت صلاحية الرابط.")
+        return
+
+    # --- عيون متحركة ---
+    stop_event = asyncio.Event()
+    anim_task = asyncio.create_task(animate_eyes(q.message, stop_event))
+    # -------------------
+
+    # اختر اسم الملف المؤقت حسب النوع
+    if action == "audio":
+        outfile = f"{msg_id}.mp3"
+    else:
+        outfile = f"{msg_id}.mp4"
+
+    # بناء أمر yt-dlp
+    if action == "audio":
+        cmd = [
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", "bestaudio[ext=m4a]/bestaudio/best",
+            "--extract-audio", "--audio-format", "mp3",
+            "-o", outfile, url
+        ]
+        caption = "🎵 صوت فقط"
+    else:
+        fmt = quality_map.get(quality, "best")
+        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
+        caption = f"🎬 جودة {quality}p"
+
+    runner = functools.partial(subprocess.run, cmd, check=True)
     try:
-        await asyncio.get_running_loop().run_in_executor(None, functools.partial(subprocess.run, cmd, check=True))
-    except Exception as e:
-        stop_evt.set(); await task
-        return await context.bot.send_message(uid, f"❌ فشل: {e}")
-    stop_evt.set(); await task
-    files = glob.glob(f"{msg_id}.*")
-    if not files: return await context.bot.send_message(uid, "❌ لا ملف!")
-    with open(files[0], "rb") as f:
-        if action=="video": await context.bot.send_video(uid, f)
-        else: await context.bot.send_audio(uid, f)
-    for fn in files: os.remove(fn)
+        await asyncio.get_running_loop().run_in_executor(None, runner)
+    except subprocess.CalledProcessError as e:
+        stop_event.set(); await anim_task
+        await context.bot.send_message(
+            uid,
+            f"❌ فشل التحميل: {e}"
+        )
+        url_store.pop(msg_id, None)
+        return
+
+    stop_event.set(); await anim_task
+
+    # ابحث عن جميع الملفات المحملة بأي صيغة تخص هذا الطلب
+    downloaded_files = glob.glob(f"{msg_id}.*")
+    if not downloaded_files:
+        await context.bot.send_message(uid, "❌ لم أستطع العثور على الملف النهائي!")
+        url_store.pop(msg_id, None)
+        return
+
+    outfile = downloaded_files[0]
+    with open(outfile, "rb") as f:
+        if action == "audio":
+            await context.bot.send_audio(uid, f, caption=caption)
+        else:
+            await context.bot.send_video(uid, f, caption=caption)
+
+    # احذف كل الملفات التي تبدأ بـ msg_id
+    for file in downloaded_files:
+        try:
+            os.remove(file)
+        except Exception:
+            pass
+
     url_store.pop(msg_id, None)
+    try:
+        await q.message.delete()
+    except:
+        pass
 
 # ————— Admin Panel Handlers —————
 async def admin_reply_button(update, context):
@@ -329,39 +420,40 @@ async def admin_panel(update, context):
         [InlineKeyboardButton("🚫 إلغاء اشتراك", callback_data="admin_unsub")],
         [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")]
     ])
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.edit_message_text("🛠️ لوحة الأدمن", reply_markup=kb)
-    else:
-        await update.message.reply_text("🛠️ لوحة الأدمن", reply_markup=kb)
+    await update.callback_query.edit_message_text("🛠️ لوحة الأدمن", reply_markup=kb)
 
 async def admin_panel_callback(update, context):
-    q=update.callback_query; await q.answer()
-    data=q.data; back=[[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
-    if data=="admin_users":
-        lines=open("users.txt").read().splitlines()
-        await safe_edit(q, f"👥 عدد المستخدمين: {len(lines)}", InlineKeyboardMarkup(back))
-    elif data=="admin_broadcast":
+    q = update.callback_query
+    await q.answer()
+    data = q.data
+    back = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
+    if data == "admin_users":
+        lines = open("users.txt").read().splitlines()
+        await safe_edit(q, f"👥 {len(lines)} مستخدم", InlineKeyboardMarkup(back))
+    elif data == "admin_broadcast":
         global admin_broadcast_mode
-        admin_broadcast_mode=True
+        admin_broadcast_mode = True
         await safe_edit(q, "أرسل الإعلان ثم 🔙", InlineKeyboardMarkup(back))
-    elif data=="admin_supports":
-        if not open_chats:
-            await safe_edit(q, "لا دعم مفتوح.", InlineKeyboardMarkup(back))
-        else:
-            buts=[[InlineKeyboardButton(f"📝 رد {uid}",callback_data=f"admin_reply|{uid}"),InlineKeyboardButton(f"❌ إنهاء {uid}",callback_data=f"admin_close|{uid}")] for uid in open_chats]
-            await safe_edit(q, "💬 دعم مفتوح:", InlineKeyboardMarkup(buts+back))
-    elif data=="admin_paidlist":
-        subs=load_subs().keys()
-        txt="مدفوعون:\n"+"\n".join(subs)
+    elif data == "admin_supports":
+        buts = [
+            [
+                InlineKeyboardButton(f"📝 رد {uid}", callback_data=f"admin_reply|{uid}"),
+                InlineKeyboardButton(f"❌ إنهاء {uid}", callback_data=f"admin_close|{uid}")
+            ] for uid in open_chats
+        ]
+        await safe_edit(q, "💬 دعم مفتوح:", InlineKeyboardMarkup(buts + back))
+    elif data == "admin_paidlist":
+        subs = load_subs().keys()
+        txt = "مدفوعون:\n" + "\n".join(subs)
         await safe_edit(q, txt, InlineKeyboardMarkup(back))
-    elif data=="admin_unsub":
+    elif data == "admin_unsub":
         await safe_edit(q, "❗ استخدم /unsub <user_id>", InlineKeyboardMarkup(back))
     else:
         await q.message.delete()
 
 # ————— Register & Run —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
+# commands & handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("unsub", unsub_command))
 app.add_handler(CallbackQueryHandler(subscribe_request, pattern=r"^subscribe_request$"))
@@ -387,3 +479,4 @@ if __name__ == "__main__":
         url_path=BOT_TOKEN,
         webhook_url=f"https://{host}/{BOT_TOKEN}"
     )
+
