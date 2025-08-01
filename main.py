@@ -5,8 +5,9 @@ import re
 import logging
 import asyncio
 import functools
+
 from datetime import datetime, timezone, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -37,15 +38,18 @@ LIMITS_FILE = "limits.json"
 ORANGE_NUMBER = "0781200500"
 DAILY_VIDEO_LIMIT = 3
 DAILY_AI_LIMIT = 5
+SUB_DURATION_DAYS = 30  # مدة الاشتراك بالأيام
 
 openai.api_key = OPENAI_API_KEY
+# If tesseract is not in PATH, uncomment and adjust:
+# pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
-# ————— State —————
+# ————— State variables —————
 url_store = {}                   # msg_id → URL
 pending_subs = set()             # user_ids awaiting approval
-open_chats = set()               # user_ids with open support
-admin_reply_to = {}              # ADMIN_ID → user_id for reply
-admin_broadcast_mode = False     # if admin is in broadcast mode
+open_chats = set()               # user_ids in active support chat
+admin_reply_to = {}              # ADMIN_ID → user_id to reply to
+admin_broadcast_mode = False     # True when admin in broadcast mode
 
 # ————— Quality map —————
 quality_map = {
@@ -74,7 +78,8 @@ def store_user(user):
         open(USERS_FILE, "w", encoding="utf-8").close()
     with open(USERS_FILE, "r", encoding="utf-8") as f:
         lines = f.read().splitlines()
-    if str(user.id) not in [line.split("|",1)[0] for line in lines]:
+    existing_ids = {line.split("|",1)[0] for line in lines}
+    if str(user.id) not in existing_ids:
         entry = f"{user.id}|{user.username or 'NO'}|{user.first_name or ''} {user.last_name or ''}".strip()
         with open(USERS_FILE, "a", encoding="utf-8") as f:
             f.write(entry + "\n")
@@ -146,63 +151,66 @@ def fullname(user):
 async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception while handling update:", exc_info=context.error)
 
-# ————— /start —————
+# ————— /start Handler —————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import Update
-    from telegram.ext import ContextTypes
+    user = update.effective_user
+    store_user(user)
 
-
-    # Admin menu
+    # Administrator menu
     if user.id == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-            [InlineKeyboardButton("📢 إعلان", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("📢 إعلان",         callback_data="admin_broadcast")],
             [InlineKeyboardButton("💬 محادثات الدعم", callback_data="admin_supports")],
-            [InlineKeyboardButton("🟢 مدفوعين", callback_data="admin_paidlist")],
+            [InlineKeyboardButton("🟢 مدفوعين",       callback_data="admin_paidlist")],
             [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_stats")],
-            [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")],
+            [InlineKeyboardButton("❌ إغلاق",         callback_data="admin_panel_close")],
         ]
         kb = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:", 
-            reply_markup=kb, parse_mode="Markdown"
+            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:",
+            reply_markup=kb,
+            parse_mode="Markdown"
         )
         return
 
-    # Regular user menu
+    # Subscribed user
     if is_subscribed(user.id):
         subs = load_subs()
         date_iso = subs[str(user.id)]["date"]
-        days = (datetime.now(timezone.utc) - datetime.fromisoformat(date_iso)).days
-        if days == 0:
+        activated = datetime.fromisoformat(date_iso)
+        expiry = activated + timedelta(days=SUB_DURATION_DAYS)
+        days_left = (expiry - datetime.now(timezone.utc)).days
+
+        if days_left > 0:
             text = (
-                "🎉 *تم تفعيل اشتراكك اليوم!* 🎉\n"
-                "استمتع بكامل ميزات البوت بدون حدود يومية.\n\n"
-                "💬 اضغط دعم لأي مساعدة."
+                f"✅ اشتراكك ساري لمدّة **{days_left}** يوم إضافي.\n\n"
+                "استمتع بكل ميزات البوت دون حدود يومية 🎉\n"
+                "💬 لأي استفسار اضغط زر الدعم أدناه."
             )
         else:
             text = (
-                f"✅ *اشتراكك مفعل منذ {days} يوم*\n"
-                "لا حدود اليوم. استمتع!\n\n"
-                "💬 اضغط دعم إذا احتجت."
+                "⚠️ انتهت مدّة اشتراكك.\n\n"
+                f"🔓 لإعادة الاشتراك، أرسل *2 د.أ* عبر أورنج ماني إلى:\n➡️ `{ORANGE_NUMBER}`\n\n"
+                "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
             )
         keyboard = [[InlineKeyboardButton("💬 دعم", callback_data="support_start")]]
     else:
+        # Free user
         text = (
             "👋 *مرحباً في بوت التحميل والـ AI!*\n\n"
-            f"🔓 للاشتراك بدون حدود يومية، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
-            f"➡️ `{ORANGE_NUMBER}`\n\n"
+            f"🔓 للاشتراك بدون حدود يومية، أرسل *2 د.أ* عبر أورنج ماني إلى:\n➡️ `{ORANGE_NUMBER}`\n\n"
             "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
         )
         keyboard = [
             [InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")],
-            [InlineKeyboardButton("💬 دعم", callback_data="support_start")],
+            [InlineKeyboardButton("💬 دعم",     callback_data="support_start")],
         ]
 
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
 
-# ————— Subscription —————
+# ————— Subscription Handlers —————
 async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -218,7 +226,7 @@ async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton("✅ تفعيل", callback_data=f"confirm_sub|{u.id}"),
-        InlineKeyboardButton("❌ رفض", callback_data=f"reject_sub|{u.id}")
+        InlineKeyboardButton("❌ رفض",  callback_data=f"reject_sub|{u.id}")
     ]])
     await context.bot.send_message(ADMIN_ID, info, reply_markup=kb, parse_mode="Markdown")
     await q.edit_message_text("✅ تم إرسال طلب الاشتراك للأدمن.")
@@ -226,7 +234,7 @@ async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    _, uid = q.data.split("|",1)
+    _, uid = q.data.split("|", 1)
     activate_subscription(int(uid))
     pending_subs.discard(int(uid))
     await context.bot.send_message(
@@ -239,7 +247,7 @@ async def confirm_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def reject_sub(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    _, uid = q.data.split("|",1)
+    _, uid = q.data.split("|", 1)
     pending_subs.discard(int(uid))
     await context.bot.send_message(
         int(uid),
@@ -255,9 +263,9 @@ async def ocr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     path = f"/tmp/{photo.file_unique_id}.jpg"
     await file.download_to_drive(path)
     try:
-        text = pytesseract.image_to_string(Image.open(path), lang="ara+eng")
-        if text.strip():
-            await update.message.reply_text(f"📄 *النص المستخرج:*\n```\n{text.strip()}\n```", parse_mode="Markdown")
+        text = pytesseract.image_to_string(Image.open(path), lang="ara+eng").strip()
+        if text:
+            await update.message.reply_text(f"📄 *النص المستخرج:*\n```{text}```", parse_mode="Markdown")
         else:
             await update.message.reply_text("⚠️ لم أستطع استخراج نص من الصورة.")
     except Exception as e:
@@ -266,7 +274,7 @@ async def ocr_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(path):
             os.remove(path)
 
-# ————— Support —————
+# ————— Support Handlers —————
 async def support_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; uid = q.from_user.id
     await q.answer()
@@ -305,8 +313,7 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
         lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
         sent = 0
         if update.message.photo:
-            media = update.message.photo[-1].file_id
-            cap = update.message.caption or ""
+            media, cap = update.message.photo[-1].file_id, update.message.caption or ""
             for l in lines:
                 uid = int(l.split("|",1)[0])
                 try:
@@ -314,8 +321,7 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
                     sent += 1
                 except: pass
         elif update.message.video:
-            media = update.message.video.file_id
-            cap = update.message.caption or ""
+            media, cap = update.message.video.file_id, update.message.caption or ""
             for l in lines:
                 uid = int(l.split("|",1)[0])
                 try:
@@ -327,10 +333,10 @@ async def support_media_router(update: Update, context: ContextTypes.DEFAULT_TYP
 # ————— Message Router —————
 async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global admin_broadcast_mode
-    u = update.effective_user
-    text = update.message.text.strip()
+    u, msg = update.effective_user, update.message
+    text = msg.text.strip()
 
-    # 1) forward support chat
+    # 1) دعم نشط
     if u.id in open_chats:
         await context.bot.send_message(
             ADMIN_ID,
@@ -338,18 +344,18 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📝 رد", callback_data=f"admin_reply|{u.id}")]]),
             parse_mode="Markdown"
         )
-        await update.message.reply_text("✅ تم التحويل للأدمن.")
+        await msg.reply_text("✅ تم التحويل للأدمن.")
         return
 
-    # 2) admin reply back
+    # 2) رد الأدمن
     if u.id == ADMIN_ID and ADMIN_ID in admin_reply_to:
         to_id = admin_reply_to.pop(ADMIN_ID)
         await context.bot.send_message(to_id, f"📩 *رد الأدمن:*\n{text}", parse_mode="Markdown")
-        await update.message.reply_text("✅ تم الإرسال.")
+        await msg.reply_text("✅ تم الإرسال.")
         return
 
-    # 3) admin broadcast text
-    if u.id == ADMIN_ID and admin_broadcast_mode and not getattr(update.message, "media_group_id", None):
+    # 3) بث نصي
+    if u.id == ADMIN_ID and admin_broadcast_mode and not getattr(msg, "media_group_id", None):
         admin_broadcast_mode = False
         lines = open(USERS_FILE, "r", encoding="utf-8").read().splitlines()
         sent = 0
@@ -359,33 +365,33 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_message(uid, text)
                 sent += 1
             except: pass
-        await update.message.reply_text(f"📢 الإعلان أُرسل إلى {sent} مستخدم.", parse_mode="Markdown")
+        await msg.reply_text(f"📢 الإعلان أُرسل إلى {sent} مستخدم.", parse_mode="Markdown")
         return
 
-    # 4) AI or download
+    # 4) AI chat
     store_user(u)
     if not is_valid_url(text):
         if u.id == ADMIN_ID:
             return
         if not check_limits(u.id, "ai"):
-            await update.message.reply_text("🚫 انتهى الحد المجاني من استفسارات AI.")
+            await msg.reply_text("🚫 انتهى الحد المجاني من استفسارات AI.")
             return
         try:
             res = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[{"role":"user","content":text}]
             )
-            await update.message.reply_text(res.choices[0].message.content)
+            await msg.reply_text(res.choices[0].message.content)
         except Exception as e:
-            await update.message.reply_text(f"⚠️ خطأ AI: {e}")
+            await msg.reply_text(f"⚠️ خطأ AI: {e}")
         return
 
-    # 5) download flow
+    # 5) تنزيل فيديو/صوت
     if not check_limits(u.id, "video"):
-        await update.message.reply_text("🚫 انتهى الحد المجاني من تنزيل الفيديو.")
+        await msg.reply_text("🚫 انتهى الحد المجاني من تنزيل الفيديو.")
         return
 
-    msg_id = str(update.message.message_id)
+    msg_id = str(msg.message_id)
     url_store[msg_id] = text
     keyboard = [
         [InlineKeyboardButton("🎵 صوت فقط", callback_data=f"audio|best|{msg_id}")],
@@ -397,18 +403,14 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
     ]
     kb = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
-    
-from telegram import Update
-from telegram.ext import ContextTypes
+    await msg.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
+    q = update.callback_query; await q.answer()
     uid = q.from_user.id
-    await q.answer()
-
     action, quality, msg_id = q.data.split("|", 2)
+
     if action == "cancel":
         await q.message.delete()
         url_store.pop(msg_id, None)
@@ -419,16 +421,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # اختر اسم ملف وممتده
-    if action == "audio":
-        outfile = f"{msg_id}.mp3"
-    else:
-        outfile = f"{msg_id}.mp4"
-
-    # أرسل رسالة فوراً
+    outfile = f"{msg_id}.mp3" if action == "audio" else f"{msg_id}.mp4"
     await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
 
-    # بناء الأمر
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -442,85 +437,64 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
         caption = f"🎬 جودة {quality}p"
 
-    # شغّل التحميل بدون حجز البوت
     runner = functools.partial(subprocess.run, cmd, check=True)
     try:
         await asyncio.get_running_loop().run_in_executor(None, runner)
     except subprocess.CalledProcessError as e:
-        await context.bot.send_message(
-            uid,
-            f"❌ فشل التحميل: {e}"
-        )
+        await context.bot.send_message(uid, f"❌ فشل التحميل: {e}")
         url_store.pop(msg_id, None)
         return
 
-    # أرسل الملف الصحيح حسب الامتداد
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
-    # نظّف
     os.remove(outfile)
     url_store.pop(msg_id, None)
-    try: 
-        await q.message.delete()
-    except: 
-        pass
-
+    try: await q.message.delete()
+    except: pass
 
 # ————— Admin Handlers —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if q.from_user.id != ADMIN_ID:
-        return
+    if q.from_user.id != ADMIN_ID: return
     _, uid = q.data.split("|",1)
     admin_reply_to[ADMIN_ID] = int(uid)
     await safe_edit(q, "📝 اكتب ردك للمستخدم:")
 
 async def admin_close_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if q.from_user.id != ADMIN_ID:
-        return
+    if q.from_user.id != ADMIN_ID: return
     _, uid = q.data.split("|",1)
     open_chats.discard(int(uid))
     await context.bot.send_message(int(uid), "❌ تم إغلاق الدعم من الأدمن.")
     await safe_edit(q, f"تم إغلاق دعم {uid}.")
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # إعداد قائمة الأدمن
     keyboard = [
         [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-        [InlineKeyboardButton("📢 إعلان", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("📢 إعلان",         callback_data="admin_broadcast")],
         [InlineKeyboardButton("💬 محادثات الدعم", callback_data="admin_supports")],
-        [InlineKeyboardButton("🟢 مدفوعين", callback_data="admin_paidlist")],
+        [InlineKeyboardButton("🟢 مدفوعين",       callback_data="admin_paidlist")],
         [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_stats")],
-        [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")],
+        [InlineKeyboardButton("❌ إغلاق",         callback_data="admin_panel_close")],
     ]
     kb = InlineKeyboardMarkup(keyboard)
-
-    # إذا النداء من CallbackQuery (زرّ)
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.edit_message_text(
-            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:", 
-            reply_markup=kb,
-            parse_mode="Markdown"
+            "🛠️ *لوحة تحكم الأدمن*\nاختر إحدى الخيارات:", reply_markup=kb, parse_mode="Markdown"
         )
     else:
-        # إذا النداء من /start أو رسالة عادية
         await update.message.reply_text(
-            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:", 
-            reply_markup=kb,
-            parse_mode="Markdown"
+            "🛠️ *لوحة تحكم الأدمن*\nاختر إحدى الخيارات:", reply_markup=kb, parse_mode="Markdown"
         )
-
 
 async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query; await q.answer()
-    if q.from_user.id != ADMIN_ID:
-        return
+    if q.from_user.id != ADMIN_ID: return
     data = q.data
     back = [[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
     if data == "admin_users":
@@ -529,30 +503,26 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton(f"💬 دعم @{l.split('|')[1]}", callback_data=f"admin_reply|{l.split('|')[0]}")]
             for l in lines
         ]
-        kb = InlineKeyboardMarkup(buttons + back)
-        await safe_edit(q, f"👥 عدد المستخدمين: {len(lines)}", kb)
+        await safe_edit(q, f"👥 عدد المستخدمين: {len(lines)}", InlineKeyboardMarkup(buttons + back))
     elif data == "admin_broadcast":
         global admin_broadcast_mode
         admin_broadcast_mode = True
-        kb = InlineKeyboardMarkup(back)
-        await safe_edit(q, "📝 أرسل نص أو وسائط للإعلان ثم اضغط «🔙 رجوع»", kb)
+        await safe_edit(q, "📝 أرسل نصًا أو وسائط للإعلان ثم اضغط «🔙 رجوع»", InlineKeyboardMarkup(back))
     elif data == "admin_supports":
         if not open_chats:
-            kb = InlineKeyboardMarkup(back)
-            await safe_edit(q, "💤 لا دردشات دعم حالية.", kb); return
+            await safe_edit(q, "💤 لا دردشات دعم حالية.", InlineKeyboardMarkup(back))
+            return
         buttons = [
             [
                 InlineKeyboardButton(f"📝 رد {uid}", callback_data=f"admin_reply|{uid}"),
                 InlineKeyboardButton(f"❌ إنهاء {uid}", callback_data=f"admin_close|{uid}")
             ] for uid in open_chats
         ]
-        kb = InlineKeyboardMarkup(buttons + back)
-        await safe_edit(q, "💬 دردشات الدعم المفتوحة:", kb)
+        await safe_edit(q, "💬 دردشات الدعم المفتوحة:", InlineKeyboardMarkup(buttons + back))
     elif data == "admin_paidlist":
         subs = load_subs().keys()
         txt = "💰 مشتركون مدفوعون:\n" + ("\n".join(subs) if subs else "لا أحد")
-        kb = InlineKeyboardMarkup(back)
-        await safe_edit(q, txt, kb)
+        await safe_edit(q, txt, InlineKeyboardMarkup(back))
     elif data == "admin_stats":
         users = len(open(USERS_FILE, "r", encoding="utf-8").read().splitlines())
         paid = len(load_subs())
@@ -568,19 +538,18 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             f"• تنزيلات اليوم: {total_v}\n"
             f"• استفسارات AI اليوم: {total_ai}"
         )
-        kb = InlineKeyboardMarkup(back)
-        await safe_edit(q, txt, kb)
+        await safe_edit(q, txt, InlineKeyboardMarkup(back))
     else:
         try: await q.message.delete()
         except: pass
 
-# ————— Register & Run —————
+# ————— Register Handlers & Start Bot —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# Commands
+# Command
 app.add_handler(CommandHandler("start", start))
 
-# Callbacks
+# CallbackQuery
 app.add_handler(CallbackQueryHandler(subscribe_request,    pattern=r"^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_sub,          pattern=r"^confirm_sub\|"))
 app.add_handler(CallbackQueryHandler(reject_sub,           pattern=r"^reject_sub\|"))
@@ -591,16 +560,22 @@ app.add_handler(CallbackQueryHandler(admin_panel,          pattern=r"^admin_pane
 app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^admin_"))
 app.add_handler(CallbackQueryHandler(button_handler,       pattern=r"^(video|audio|cancel)\|"))
 
-# OCR
-app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r"^(?:استخراج نص|/ocr)"), ocr_handler))
+# OCR Handler
+app.add_handler(MessageHandler(
+    filters.PHOTO & filters.CaptionRegex(r"^(?:استخراج نص|/ocr)"),
+    ocr_handler
+))
 
-# Media support
-app.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, support_media_router))
+# Media support & broadcast
+app.add_handler(MessageHandler(
+    (filters.PHOTO | filters.VIDEO) & ~filters.COMMAND,
+    support_media_router
+))
 
-# Text routing
+# Text routing (AI & download & support)
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_router))
 
-# Errors
+# Error handler
 app.add_error_handler(error_handler)
 
 if __name__ == "__main__":
