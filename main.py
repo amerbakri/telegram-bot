@@ -412,7 +412,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     await q.answer()
@@ -428,65 +428,61 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # اختر اسم ملف وممتده
+    # اختر امتداد الإخراج
     if action == "audio":
         outfile = f"{msg_id}.mp3"
-    else:
-        outfile = f"{msg_id}.mp4"
-
-    # أرسل رسالة فوراً
-    await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
-
-    # بناء الأمر
-    if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--extract-audio", "--audio-format", "mp3",
-            "-o", outfile, url
+            "-o", outfile,
+            url
         ]
         caption = "🎵 صوت فقط"
     else:
+        outfile = f"{msg_id}.mp4"
         fmt = quality_map.get(quality, "best")
-# الجديد:
-cmd = [
-    "yt-dlp",
-    "--cookies", COOKIES_FILE,
-    "-f", fmt,
-    "--merge-output-format", "mp4",
-    "-o", outfile,
-    url
-]
-
+        cmd = [
+            "yt-dlp", "--cookies", COOKIES_FILE,
+            "-f", fmt,
+            "--merge-output-format", "mp4",
+            "-o", outfile,
+            url
+        ]
         caption = f"🎬 جودة {quality}p"
 
-    # شغّل التحميل بدون حجز البوت
+    # تشغيل الأمر في الخلفية
+    await q.edit_message_text("⏳ جاري التحميل…")
     runner = functools.partial(subprocess.run, cmd, check=True)
     try:
         await asyncio.get_running_loop().run_in_executor(None, runner)
     except subprocess.CalledProcessError as e:
-        await context.bot.send_message(
-            uid,
-            f"❌ فشل التحميل: {e}"
-        )
+        await context.bot.send_message(uid, f"❌ فشل التحميل: {e}")
         url_store.pop(msg_id, None)
         return
 
-    # أرسل الملف الصحيح حسب الامتداد
+    # تحقق من وجود الملف وأرسله
+    if not os.path.exists(outfile):
+        await context.bot.send_message(uid, "⚠️ لم يُعثر على الملف.")
+        url_store.pop(msg_id, None)
+        return
+
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
-    # نظّف
-    os.remove(outfile)
-    url_store.pop(msg_id, None)
-    try: 
-        await q.message.delete()
-    except: 
+    # نظّف الملفات والرسائل
+    try:
+        os.remove(outfile)
+    except OSError:
         pass
-
+    url_store.pop(msg_id, None)
+    try:
+        await q.message.delete()
+    except:
+        pass
 
 # ————— Admin Handlers —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
