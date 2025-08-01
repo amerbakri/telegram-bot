@@ -412,7 +412,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     await q.answer()
