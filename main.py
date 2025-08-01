@@ -29,7 +29,7 @@ with open("filtered_cookies.txt", "w", encoding="utf-8") as f:
     f.writelines(filtered)
 
 # استخدم الملف المصفّى بعد كذا
-COOKIES_FILE = "filtered_cookies.txt"
+#COOKIES_FILE = "filtered_cookies.txt"
 
 # ————— Logging —————
 logging.basicConfig(
