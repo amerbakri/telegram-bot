@@ -4,10 +4,8 @@ import subprocess
 import re
 import logging
 import asyncio
-import functools
-from datetime import datetime, timezone, timedelta
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import functoolsfrom datetime import datetime, timezone, timedelta
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -19,16 +17,6 @@ from telegram.ext import (
 import openai
 import pytesseract
 from PIL import Image
-
-filtered = []
-with open("cookies.txt", "r", encoding="utf-8") as f:
-    for line in f:
-        if re.match(r"^(?:\.?youtube\.com|\.?facebook\.com|\.?instagram\.com|\.?tiktok\.com)", line):
-            filtered.append(line)
-with open("filtered_cookies.txt", "w", encoding="utf-8") as f:
-    f.writelines(filtered)
-
-# استخدم الملف المصفّى بعد كذا
 
 # ————— Logging —————
 logging.basicConfig(
@@ -158,71 +146,59 @@ async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception while handling update:", exc_info=context.error)
 
 # ————— /start —————
-# ————— مدة الاشتراك بالأيام —————
-SUB_DURATION_DAYS = 30
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     store_user(user)
 
-    # --- الأدمن ---
+    # Admin menu
     if user.id == ADMIN_ID:
         keyboard = [
             [InlineKeyboardButton("👥 عدد المستخدمين", callback_data="admin_users")],
-            [InlineKeyboardButton("📢 إعلان",         callback_data="admin_broadcast")],
+            [InlineKeyboardButton("📢 إعلان", callback_data="admin_broadcast")],
             [InlineKeyboardButton("💬 محادثات الدعم", callback_data="admin_supports")],
-            [InlineKeyboardButton("🟢 مدفوعين",       callback_data="admin_paidlist")],
+            [InlineKeyboardButton("🟢 مدفوعين", callback_data="admin_paidlist")],
             [InlineKeyboardButton("📊 إحصائيات متقدمة", callback_data="admin_stats")],
-            [InlineKeyboardButton("❌ إغلاق",         callback_data="admin_panel_close")],
+            [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")],
         ]
         kb = InlineKeyboardMarkup(keyboard)
         await update.message.reply_text(
-            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات أدناه:",
+            "🛠️ *لوحة تحكم الأدمن*\nاختر أحد الخيارات:", 
             reply_markup=kb, parse_mode="Markdown"
         )
         return
 
-    # --- المستخدم المشترك ---
+    # Regular user menu
     if is_subscribed(user.id):
-        subs      = load_subs()
-        date_iso  = subs[str(user.id)]["date"]
-        activated = datetime.fromisoformat(date_iso)
-        expiry    = activated + timedelta(days=SUB_DURATION_DAYS)
-        now       = datetime.now(timezone.utc)
-        days_left = (expiry - now).days
-
-        if days_left > 0:
+        subs = load_subs()
+        date_iso = subs[str(user.id)]["date"]
+        days = (datetime.now(timezone.utc) - datetime.fromisoformat(date_iso)).days
+        if days == 0:
             text = (
-                f"✅ اشتراكك ساري لمدّة **{days_left}** يوم إضافي.\n\n"
-                "استمتع الآن بكل ميزات البوت دون حدود يومية 🎉\n"
-                "💬 لأي استفسار اضغط زر الدعم أدناه."
+                "🎉 *تم تفعيل اشتراكك اليوم!* 🎉\n"
+                "استمتع بكامل ميزات البوت بدون حدود يومية.\n\n"
+                "💬 اضغط دعم لأي مساعدة."
             )
         else:
             text = (
-                "⚠️ انتهت مدّة اشتراكك.\n\n"
-                "🔓 لإعادة الاشتراك، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
-                f"➡️ `{ORANGE_NUMBER}`\n\n"
-                "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
+                f"✅ *اشتراكك مفعل منذ {days} يوم*\n"
+                "لا حدود اليوم. استمتع!\n\n"
+                "💬 اضغط دعم إذا احتجت."
             )
-
         keyboard = [[InlineKeyboardButton("💬 دعم", callback_data="support_start")]]
-
-    # --- المستخدم غير المشترك ---
     else:
         text = (
             "👋 *مرحباً في بوت التحميل والـ AI!*\n\n"
-            f"🔓 للاشتراك الكامل (بدون حدود يومية)، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
+            f"🔓 للاشتراك بدون حدود يومية، أرسل *2 د.أ* عبر أورنج ماني إلى:\n"
             f"➡️ `{ORANGE_NUMBER}`\n\n"
             "ثم اضغط `اشترك` لإرسال طلبك للأدمن."
         )
         keyboard = [
             [InlineKeyboardButton("🔓 اشترك", callback_data="subscribe_request")],
-            [InlineKeyboardButton("💬 دعم",     callback_data="support_start")],
+            [InlineKeyboardButton("💬 دعم", callback_data="support_start")],
         ]
 
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
-
 
 # ————— Subscription —————
 async def subscribe_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,98 +397,72 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
-# ————— Download Handler —————async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ————— Download Handler —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     await q.answer()
 
-    # flexible parsing of callback data
-    parts = q.data.split("|")
-    action = parts[0]
-
-    # 1) إلغاء العملية
+    action, quality, msg_id = q.data.split("|", 2)
     if action == "cancel":
-        msg_id = parts[1]
         await q.message.delete()
         url_store.pop(msg_id, None)
         return
 
-    # 2) تحميل صوت أو فيديو
-    if action in ("audio", "video"):
-        quality = parts[1]   # for audio this is 'best'
-        msg_id = parts[2]
-    else:
-        # callback غير متوقع
-        return
-
-    # تأكد أن الرابط موجود
     url = url_store.get(msg_id)
     if not url:
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # حدد اسم الملف والأمر المناسب
+    # اختر اسم ملف وممتده
     if action == "audio":
         outfile = f"{msg_id}.mp3"
+    else:
+        outfile = f"{msg_id}.mp4"
+
+    # أرسل رسالة فوراً
+    await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
+
+    # بناء الأمر
+    if action == "audio":
         cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
+            "yt-dlp", "--cookies", COOKIES_FILE,
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--extract-audio", "--audio-format", "mp3",
-            "-o", outfile,
-            url
+            "-o", outfile, url
         ]
         caption = "🎵 صوت فقط"
     else:
-        outfile = f"{msg_id}.mp4"
         fmt = quality_map.get(quality, "best")
-        cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
-            "-f", fmt,
-            "--merge-output-format", "mp4",
-            "-o", outfile,
-            url
-        ]
+        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
         caption = f"🎬 جودة {quality}p"
 
-    # ابدأ التحميل في الخلفية
-    await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
+    # شغّل التحميل بدون حجز البوت
     runner = functools.partial(subprocess.run, cmd, check=True)
     try:
         await asyncio.get_running_loop().run_in_executor(None, runner)
     except subprocess.CalledProcessError as e:
-        await context.bot.send_message(uid, f"❌ فشل التحميل: {e}")
+        await context.bot.send_message(
+            uid,
+            f"❌ فشل التحميل: {e}"
+        )
         url_store.pop(msg_id, None)
         return
 
-    # تأكد من وجود الملف بعد الدمج
-    if not os.path.exists(outfile):
-        await context.bot.send_message(uid, "⚠️ تعذّر العثور على الملف بعد عملية التحميل.")
-        url_store.pop(msg_id, None)
-        return
+    # أرسل الملف الصحيح حسب الامتداد
+    with open(outfile, "rb") as f:
+        if action == "audio":
+            await context.bot.send_audio(uid, f, caption=caption)
+        else:
+            await context.bot.send_video(uid, f, caption=caption)
 
-    # أرسل الملف حسب نوعه
-    try:
-        with open(outfile, "rb") as f:
-            if action == "audio":
-                await context.bot.send_audio(uid, f, caption=caption)
-            else:
-                await context.bot.send_video(uid, f, caption=caption)
-    except Exception as e:
-        await context.bot.send_message(uid, f"⚠️ خطأ أثناء الإرسال: {e}")
-    finally:
-        # نظّف
-        try:
-            os.remove(outfile)
-        except OSError:
-            pass
-        url_store.pop(msg_id, None)
-        try:
-            await q.message.delete()
-        except:
-            pass
+    # نظّف
+    os.remove(outfile)
+    url_store.pop(msg_id, None)
+    try: 
+        await q.message.delete()
+    except: 
+        pass
 
 
 # ————— Admin Handlers —————
