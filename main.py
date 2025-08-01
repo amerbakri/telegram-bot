@@ -417,18 +417,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = q.from_user.id
     await q.answer()
 
-    action, quality, msg_id = q.data.split("|", 2)
+    # flexible parsing of callback data
+    parts = q.data.split("|")
+    action = parts[0]
+
+    # 1) إلغاء العملية
     if action == "cancel":
+        msg_id = parts[1]
         await q.message.delete()
         url_store.pop(msg_id, None)
         return
 
+    # 2) تحميل صوت أو فيديو
+    if action in ("audio", "video"):
+        quality = parts[1]   # for audio this is 'best' placeholder
+        msg_id  = parts[2]
+    else:
+        # callback غير متوقع
+        return
+
+    # تأكد أن الرابط موجود
     url = url_store.get(msg_id)
     if not url:
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # اختر امتداد الإخراج
+    # حدد اسم الملف والأمر المناسب
     if action == "audio":
         outfile = f"{msg_id}.mp3"
         cmd = [
@@ -451,8 +465,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         caption = f"🎬 جودة {quality}p"
 
-    # تشغيل الأمر في الخلفية
-    await q.edit_message_text("⏳ جاري التحميل…")
+    # ابدأ التحميل في الخلفية
+    await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
     runner = functools.partial(subprocess.run, cmd, check=True)
     try:
         await asyncio.get_running_loop().run_in_executor(None, runner)
@@ -461,28 +475,33 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         url_store.pop(msg_id, None)
         return
 
-    # تحقق من وجود الملف وأرسله
+    # تأكد من وجود الملف بعد الدمج
     if not os.path.exists(outfile):
-        await context.bot.send_message(uid, "⚠️ لم يُعثر على الملف.")
+        await context.bot.send_message(uid, "⚠️ تعذّر العثور على الملف بعد عملية التحميل.")
         url_store.pop(msg_id, None)
         return
 
-    with open(outfile, "rb") as f:
-        if action == "audio":
-            await context.bot.send_audio(uid, f, caption=caption)
-        else:
-            await context.bot.send_video(uid, f, caption=caption)
+    # أرسل الملف حسب نوعه
+    try:
+        with open(outfile, "rb") as f:
+            if action == "audio":
+                await context.bot.send_audio(uid, f, caption=caption)
+            else:
+                await context.bot.send_video(uid, f, caption=caption)
+    except Exception as e:
+        await context.bot.send_message(uid, f"⚠️ خطأ أثناء الإرسال: {e}")
+    finally:
+        # نظّف
+        try:
+            os.remove(outfile)
+        except OSError:
+            pass
+        url_store.pop(msg_id, None)
+        try:
+            await q.message.delete()
+        except:
+            pass
 
-    # نظّف الملفات والرسائل
-    try:
-        os.remove(outfile)
-    except OSError:
-        pass
-    url_store.pop(msg_id, None)
-    try:
-        await q.message.delete()
-    except:
-        pass
 
 # ————— Admin Handlers —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
