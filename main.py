@@ -20,6 +20,17 @@ import openai
 import pytesseract
 from PIL import Image
 
+filtered = []
+with open("cookies.txt", "r", encoding="utf-8") as f:
+    for line in f:
+        if re.match(r"^(?:\.?youtube\.com|\.?facebook\.com|\.?instagram\.com|\.?tiktok\.com)", line):
+            filtered.append(line)
+with open("filtered_cookies.txt", "w", encoding="utf-8") as f:
+    f.writelines(filtered)
+
+# استخدم الملف المصفّى بعد كذا
+COOKIES_FILE = "filtered_cookies.txt"
+
 # ————— Logging —————
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
