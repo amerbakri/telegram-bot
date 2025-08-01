@@ -406,11 +406,14 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    uid = q.from_user.id
-    action, quality, msg_id = q.data.split("|", 2)
+import glob
 
+async def button_handler(update, context):
+    q = update.callback_query
+    uid = q.from_user.id
+    await q.answer()
+
+    action, quality, msg_id = q.data.split("|", 2)
     if action == "cancel":
         await q.message.delete()
         url_store.pop(msg_id, None)
@@ -421,9 +424,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    outfile = f"{msg_id}.mp3" if action == "audio" else f"{msg_id}.mp4"
+    # اختر اسم الملف المؤقت حسب النوع
+    if action == "audio":
+        outfile = f"{msg_id}.mp3"
+    else:
+        outfile = f"{msg_id}.mp4"
+
     await q.edit_message_text("⏳ جاري التحميل في الخلفية، الرجاء الانتظار...")
 
+    # بناء أمر yt-dlp
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -441,20 +450,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await asyncio.get_running_loop().run_in_executor(None, runner)
     except subprocess.CalledProcessError as e:
-        await context.bot.send_message(uid, f"❌ فشل التحميل: {e}")
+        await context.bot.send_message(
+            uid,
+            f"❌ فشل التحميل: {e}"
+        )
         url_store.pop(msg_id, None)
         return
 
+    # ابحث عن جميع الملفات المحملة بأي صيغة تخص هذا الطلب
+    downloaded_files = glob.glob(f"{msg_id}.*")
+    if not downloaded_files:
+        await context.bot.send_message(uid, "❌ لم أستطع العثور على الملف النهائي!")
+        url_store.pop(msg_id, None)
+        return
+
+    outfile = downloaded_files[0]
     with open(outfile, "rb") as f:
         if action == "audio":
             await context.bot.send_audio(uid, f, caption=caption)
         else:
             await context.bot.send_video(uid, f, caption=caption)
 
-    os.remove(outfile)
+    # احذف كل الملفات التي تبدأ بـ msg_id
+    for file in downloaded_files:
+        try:
+            os.remove(file)
+        except Exception:
+            pass
+
     url_store.pop(msg_id, None)
-    try: await q.message.delete()
-    except: pass
+    try:
+        await q.message.delete()
+    except:
+        pass
+
 
 # ————— Admin Handlers —————
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
