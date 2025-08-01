@@ -242,6 +242,7 @@ async def support_media_router(update, context):
 
 # ————— Message Router —————
 async def message_router(update, context):
+    global admin_broadcast_mode
     u, msg = update.effective_user, update.message
     text = msg.text.strip()
     if u.id in open_chats:
