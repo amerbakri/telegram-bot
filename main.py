@@ -448,7 +448,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = "🎵 صوت فقط"
     else:
         fmt = quality_map.get(quality, "best")
-        cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", outfile, url]
+# الجديد:
+cmd = [
+    "yt-dlp",
+    "--cookies", COOKIES_FILE,
+    "-f", fmt,
+    "--merge-output-format", "mp4",
+    "-o", outfile,
+    url
+]
+
         caption = f"🎬 جودة {quality}p"
 
     # شغّل التحميل بدون حجز البوت
