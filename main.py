@@ -421,8 +421,7 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
-# ————— Download Handler —————
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ————— Download Handler —————async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     uid = q.from_user.id
     await q.answer()
@@ -457,7 +456,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         outfile = f"{msg_id}.mp3"
         cmd = [
             "yt-dlp",
-            "--cookies-from-browser", "chrome",  # يقرأ الكوكيز من Chrome مباشرة
+            "--cookies-from-browser", "chrome",  # يقرأ الكوكيز من Chrome
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--extract-audio", "--audio-format", "mp3",
             "-o", outfile,
