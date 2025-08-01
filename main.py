@@ -6,6 +6,7 @@ import logging
 import asyncio
 import functools
 import glob
+import random
 from datetime import datetime, timezone, timedelta
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
@@ -407,50 +408,48 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== Download Handler ======
 from telegram.constants import ParseMode
 
-async def button_handler(update, context):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
-    data = q.data
-    # تفكيك البيانات مع حماية
-    parts = data.split("|")
-    if len(parts) < 2:
-        await q.answer("❗️طلب غير صالح.")
+
+    # تقسيم بيانات الزر (callback)
+    qdata = q.data.split("|")
+    if len(qdata) == 3:
+        action, quality, msg_id = qdata
+    elif len(qdata) == 2:
+        action, msg_id = qdata
+        quality = None
+    else:
+        await q.answer("طلب غير صالح.")
         return
-    action = parts[0]
-    # زر الإلغاء قد يكون بصيغة "cancel|1234"
+
+    # إلغاء الطلب
     if action == "cancel":
-        msg_id = parts[1]
-        try:
-            await q.message.delete()
-        except:
-            pass
+        try: await q.message.delete()
+        except: pass
         url_store.pop(msg_id, None)
         return
 
-    # باقي الخيارات لازم يكونوا 3 أجزاء
-    if len(parts) != 3:
-        await q.answer("❗️طلب غير صالح.")
-        return
-
-    action, quality, msg_id = parts
     url = url_store.get(msg_id)
     if not url:
-        await q.answer("⚠️ انتهت صلاحية الرابط.")
+        await q.answer("انتهت صلاحية الرابط.")
+        try: await q.message.delete()
+        except: pass
         return
 
-    # إظهار عيون متحركة (Telegram animation)
-    animation_url = "https://media.telegram.org/file/eyes_loading_animation.mp4"
-    eyes_message = await context.bot.send_animation(
-        chat_id=q.from_user.id,
-        animation=animation_url,
-        caption="👀 جاري التحميل ...",
-        parse_mode=ParseMode.MARKDOWN
+    # ----------------- Emoji Animation (عيون) -----------------
+    eyes = random.choice(["👀", "👁️👁️", "🫣", "🧐", "😳", "🤩", "👓", "😎", "🦾👀"])
+    # رسالة جاري التحميل مع عيون متحركة
+    loading_msg = await q.edit_message_text(
+        f"{eyes} جاري التحميل ... انتظر قليلاً"
     )
 
-    # اسم ملف خاص بكل تحميل
-    outfile = f"{msg_id}.mp4" if action == "video" else f"{msg_id}.mp3"
-    await q.edit_message_text("⏳ جاري التحميل ...")
-    # إعداد الأمر
+    # اسم الملف المؤقت (عشوائي حسب msg_id)
+    if action == "audio":
+        outfile = f"{msg_id}.mp3"
+    else:
+        outfile = f"{msg_id}.mp4"
+
+    # أمر التحميل حسب النوع والجودة
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -468,13 +467,19 @@ async def button_handler(update, context):
         ]
         caption = f"🎬 جودة {quality}p"
 
-    # التحميل في الخلفية
+    # تحميل الملف بشكل غير متزامن (لا يعلق البوت)
+    import asyncio
+    import functools
+    runner = functools.partial(subprocess.run, cmd, check=True)
     try:
-        await asyncio.get_running_loop().run_in_executor(None, lambda: subprocess.run(cmd, check=True))
-    except Exception as e:
-        await context.bot.send_message(q.from_user.id, f"❌ فشل التحميل: {e}")
+        await asyncio.get_running_loop().run_in_executor(None, runner)
+    except subprocess.CalledProcessError as e:
+        await context.bot.send_message(
+            q.from_user.id,
+            f"❌ فشل التحميل: {e}"
+        )
         url_store.pop(msg_id, None)
-        try: await eyes_message.delete()
+        try: await loading_msg.delete()
         except: pass
         return
 
@@ -487,14 +492,15 @@ async def button_handler(update, context):
                 await context.bot.send_video(q.from_user.id, f, caption=caption)
     except Exception as e:
         await context.bot.send_message(q.from_user.id, f"❌ لم أستطع إرسال الملف: {e}")
-    finally:
-        if os.path.exists(outfile): os.remove(outfile)
-        url_store.pop(msg_id, None)
-        try: await q.message.delete()
-        except: pass
-        try: await eyes_message.delete()
-        except: pass
 
+    # حذف الملف المؤقت
+    if os.path.exists(outfile):
+        os.remove(outfile)
+    url_store.pop(msg_id, None)
+    try:
+        await loading_msg.delete()
+    except:
+        pass
 
 # ====== Admin Handlers ======
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
