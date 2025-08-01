@@ -440,8 +440,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 2) تحميل صوت أو فيديو
     if action in ("audio", "video"):
-        quality = parts[1]   # for audio this is 'best' placeholder
-        msg_id  = parts[2]
+        quality = parts[1]   # for audio this is 'best'
+        msg_id = parts[2]
     else:
         # callback غير متوقع
         return
@@ -456,7 +456,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if action == "audio":
         outfile = f"{msg_id}.mp3"
         cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
+            "yt-dlp",
+            "--cookies-from-browser", "chrome",  # يقرأ الكوكيز من Chrome مباشرة
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--extract-audio", "--audio-format", "mp3",
             "-o", outfile,
@@ -466,14 +467,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         outfile = f"{msg_id}.mp4"
         fmt = quality_map.get(quality, "best")
-    cmd = [
-        "yt-dlp",
-        "--cookies-from-browser", "chrome",   # ← يقرأ الكوكيز من Chrome مباشرة
-        "-f", fmt,
-        "--merge-output-format", "mp4",
-        "-o", outfile,
-        url
-    ]
+        cmd = [
+            "yt-dlp",
+            "--cookies-from-browser", "chrome",
+            "-f", fmt,
+            "--merge-output-format", "mp4",
+            "-o", outfile,
+            url
+        ]
         caption = f"🎬 جودة {quality}p"
 
     # ابدأ التحميل في الخلفية
