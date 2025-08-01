@@ -13,8 +13,9 @@ from telegram.ext import (
 )
 import openai
 import pytesseract
-import yt_dlp
+import subprocess
 from PIL import Image
+import yt_dlp
 
 # ————— فلترة الكوكيز —————
 filtered = []
@@ -142,7 +143,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await update.message.reply_text("🛠️ *لوحة تحكم الأدمن*", reply_markup=kb, parse_mode="Markdown")
         return
-    # user menu
     if is_subscribed(user.id):
         date = load_subs()[str(user.id)]["date"][:10]
         text = f"✅ اشتراكك مفعل منذ {date}"
@@ -236,8 +236,9 @@ async def support_media_router(update, context):
                     await context.bot.send_photo(uid, update.message.photo[-1].file_id, caption=update.message.caption or "")
                 elif update.message.video:
                     await context.bot.send_video(uid, update.message.video.file_id, caption=update.message.caption or "")
+                elif update.message.text:
+                    await context.bot.send_message(uid, update.message.text)
             except: pass
-        return
 
 # ————— Message Router —————
 async def message_router(update, context):
@@ -266,14 +267,14 @@ async def message_router(update, context):
             return await msg.reply_text(res.choices[0].message.content)
         except Exception as e:
             return await msg.reply_text(f"⚠️ AI خطأ: {e}")
-    # download menu
     if not check_limits(u.id, "video"): return await msg.reply_text("🚫 انتهى حد الفيديو.")
     msg_id = str(msg.message_id)
     url_store[msg_id] = text
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎥 720p", callback_data=f"video|720|{msg_id}"), InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
+        [InlineKeyboardButton("🎥 فيديو", callback_data=f"video|best|{msg_id}"), InlineKeyboardButton("🎵 صوت", callback_data=f"audio|best|{msg_id}")],
+        [InlineKeyboardButton("❌ إلغاء", callback_data=f"cancel|{msg_id}")]
     ])
-    await msg.reply_text("✨ اختر جودة:", reply_markup=kb)
+    await msg.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
 
 # ————— Download Handler —————
 async def button_handler(update, context):
@@ -284,20 +285,17 @@ async def button_handler(update, context):
         return await q.message.delete()
     url = url_store.get(msg_id)
     if not url: return await q.answer("⚠️ انتهى.")
-    # start eye animation
     stop_evt = asyncio.Event()
     task = asyncio.create_task(animate_eyes(q.message, stop_evt))
-    # download
-    ext = ".mp4" if action == "video" else ".mp3"
-    out = f"{msg_id}{ext}"
-    fmt = f"bestvideo[height<={quality}]+bestaudio/best" if action=="video" else "bestaudio"
+    out_suffix = ".mp4" if action=="video" else ".mp3"
+    out = f"{msg_id}{out_suffix}"
+    fmt = quality if action=="audio" else f"bestvideo[height<={quality}]+bestaudio/best"
     cmd = ["yt-dlp", "--cookies", COOKIES_FILE, "-f", fmt, "-o", out, url]
     try:
         await asyncio.get_running_loop().run_in_executor(None, functools.partial(subprocess.run, cmd, check=True))
     except Exception as e:
         stop_evt.set(); await task
         return await context.bot.send_message(uid, f"❌ فشل: {e}")
-    # stop animation
     stop_evt.set(); await task
     files = glob.glob(f"{msg_id}.*")
     if not files: return await context.bot.send_message(uid, "❌ لا ملف!")
@@ -330,21 +328,28 @@ async def admin_panel(update, context):
         [InlineKeyboardButton("🚫 إلغاء اشتراك", callback_data="admin_unsub")],
         [InlineKeyboardButton("❌ إغلاق", callback_data="admin_panel_close")]
     ])
-    await update.callback_query.edit_message_text("🛠️ لوحة الأدمن", reply_markup=kb)
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.edit_message_text("🛠️ لوحة الأدمن", reply_markup=kb)
+    else:
+        await update.message.reply_text("🛠️ لوحة الأدمن", reply_markup=kb)
 
 async def admin_panel_callback(update, context):
     q=update.callback_query; await q.answer()
     data=q.data; back=[[InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel")]]
     if data=="admin_users":
         lines=open("users.txt").read().splitlines()
-        await safe_edit(q, f"👥 {len(lines)} مستخدم", InlineKeyboardMarkup(back))
+        await safe_edit(q, f"👥 عدد المستخدمين: {len(lines)}", InlineKeyboardMarkup(back))
     elif data=="admin_broadcast":
         global admin_broadcast_mode
         admin_broadcast_mode=True
         await safe_edit(q, "أرسل الإعلان ثم 🔙", InlineKeyboardMarkup(back))
     elif data=="admin_supports":
-        buts=[[InlineKeyboardButton(f"📝 رد {uid}",callback_data=f"admin_reply|{uid}"),InlineKeyboardButton(f"❌ إنهاء {uid}",callback_data=f"admin_close|{uid}")] for uid in open_chats]
-        await safe_edit(q, "💬 دعم مفتوح:", InlineKeyboardMarkup(buts+back))
+        if not open_chats:
+            await safe_edit(q, "لا دعم مفتوح.", InlineKeyboardMarkup(back))
+        else:
+            buts=[[InlineKeyboardButton(f"📝 رد {uid}",callback_data=f"admin_reply|{uid}"),InlineKeyboardButton(f"❌ إنهاء {uid}",callback_data=f"admin_close|{uid}")] for uid in open_chats]
+            await safe_edit(q, "💬 دعم مفتوح:", InlineKeyboardMarkup(buts+back))
     elif data=="admin_paidlist":
         subs=load_subs().keys()
         txt="مدفوعون:\n"+"\n".join(subs)
@@ -356,14 +361,13 @@ async def admin_panel_callback(update, context):
 
 # ————— Register & Run —————
 app = ApplicationBuilder().token(BOT_TOKEN).build()
-# commands & handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("unsub", unsub_command))
 app.add_handler(CallbackQueryHandler(subscribe_request, pattern=r"^subscribe_request$"))
 app.add_handler(CallbackQueryHandler(confirm_sub, pattern=r"^confirm_sub\|"))
 app.add_handler(CallbackQueryHandler(reject_sub, pattern=r"^reject_sub\|"))
 app.add_handler(CallbackQueryHandler(support_button, pattern=r"^support_(start|end)$"))
-app.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(video|cancel)\|"))
+app.add_handler(CallbackQueryHandler(button_handler, pattern=r"^(video|audio|cancel)\|"))
 app.add_handler(CallbackQueryHandler(admin_reply_button, pattern=r"^admin_reply\|"))
 app.add_handler(CallbackQueryHandler(admin_close_button, pattern=r"^admin_close\|"))
 app.add_handler(CallbackQueryHandler(admin_panel, pattern=r"^admin_panel$"))
@@ -382,4 +386,3 @@ if __name__ == "__main__":
         url_path=BOT_TOKEN,
         webhook_url=f"https://{host}/{BOT_TOKEN}"
     )
-```
