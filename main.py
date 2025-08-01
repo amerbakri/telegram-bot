@@ -405,29 +405,52 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✨ اختر الجودة أو صوت فقط:", reply_markup=kb)
 
 # ====== Download Handler ======
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    uid = q.from_user.id
-    await q.answer()
+from telegram.constants import ParseMode
 
-    action, quality, msg_id = q.data.split("|", 2)
+async def button_handler(update, context):
+    q = update.callback_query
+    await q.answer()
+    data = q.data
+    # تفكيك البيانات مع حماية
+    parts = data.split("|")
+    if len(parts) < 2:
+        await q.answer("❗️طلب غير صالح.")
+        return
+    action = parts[0]
+    # زر الإلغاء قد يكون بصيغة "cancel|1234"
     if action == "cancel":
-        await q.message.delete()
+        msg_id = parts[1]
+        try:
+            await q.message.delete()
+        except:
+            pass
         url_store.pop(msg_id, None)
         return
-        url = url_store.get(msg_id)
+
+    # باقي الخيارات لازم يكونوا 3 أجزاء
+    if len(parts) != 3:
+        await q.answer("❗️طلب غير صالح.")
+        return
+
+    action, quality, msg_id = parts
+    url = url_store.get(msg_id)
     if not url:
         await q.answer("⚠️ انتهت صلاحية الرابط.")
         return
 
-    # اسم الملف (حسب نوع التحميل)
-    ext = "mp3" if action == "audio" else "mp4"
-    outfile = f"{msg_id}.{ext}"
+    # إظهار عيون متحركة (Telegram animation)
+    animation_url = "https://media.telegram.org/file/eyes_loading_animation.mp4"
+    eyes_message = await context.bot.send_animation(
+        chat_id=q.from_user.id,
+        animation=animation_url,
+        caption="👀 جاري التحميل ...",
+        parse_mode=ParseMode.MARKDOWN
+    )
 
-    # رسالة متحركة أثناء التحميل (رمز العيون 👀)
-    await safe_edit(q, "👀 جاري التحميل... الرجاء الانتظار")
-
-    # بناء أمر التحميل
+    # اسم ملف خاص بكل تحميل
+    outfile = f"{msg_id}.mp4" if action == "video" else f"{msg_id}.mp3"
+    await q.edit_message_text("⏳ جاري التحميل ...")
+    # إعداد الأمر
     if action == "audio":
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
@@ -438,58 +461,40 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = "🎵 صوت فقط"
     else:
         fmt = quality_map.get(quality, "best")
-        # نضيف --remux-video mp4 لإجبار yt-dlp على إعطاء امتداد mp4 في كل الحالات (حتى لو ملف الويبم)
         cmd = [
             "yt-dlp", "--cookies", COOKIES_FILE,
             "-f", fmt,
-            "--remux-video", "mp4",
             "-o", outfile, url
         ]
         caption = f"🎬 جودة {quality}p"
 
-    # تشغيل yt-dlp في خلفية مستقلة
-    runner = functools.partial(subprocess.run, cmd, check=True)
+    # التحميل في الخلفية
     try:
-        await asyncio.get_running_loop().run_in_executor(None, runner)
-    except subprocess.CalledProcessError as e:
-        await context.bot.send_message(
-            uid,
-            f"❌ فشل التحميل: {e}. جرب جودة أو رابط آخر."
-        )
+        await asyncio.get_running_loop().run_in_executor(None, lambda: subprocess.run(cmd, check=True))
+    except Exception as e:
+        await context.bot.send_message(q.from_user.id, f"❌ فشل التحميل: {e}")
         url_store.pop(msg_id, None)
-        try:
-            await q.message.delete()
+        try: await eyes_message.delete()
         except: pass
-        # حذف كل الملفات المؤقتة المتعلقة بنفس msg_id
-        for f in glob.glob(f"{msg_id}*"):
-            try: os.remove(f)
-            except: pass
         return
 
-    # البحث عن الملف النهائي (mp4 أو mp3)
-    files = glob.glob(f"{msg_id}.*")
-    found = False
-    for file_path in files:
-        try:
-            with open(file_path, "rb") as f:
-                if action == "audio":
-                    await context.bot.send_audio(uid, f, caption=caption)
-                else:
-                    await context.bot.send_video(uid, f, caption=caption)
-            found = True
-            break
-        except Exception as e:
-            continue
-    # إذا لم يجد الملف
-    if not found:
-        await context.bot.send_message(uid, "⚠️ لم أتمكن من إرسال الملف. يرجى إعادة المحاولة.")
-    # تنظيف الملفات المؤقتة
-    for f in files:
-        try: os.remove(f)
+    # إرسال الملف
+    try:
+        with open(outfile, "rb") as f:
+            if action == "audio":
+                await context.bot.send_audio(q.from_user.id, f, caption=caption)
+            else:
+                await context.bot.send_video(q.from_user.id, f, caption=caption)
+    except Exception as e:
+        await context.bot.send_message(q.from_user.id, f"❌ لم أستطع إرسال الملف: {e}")
+    finally:
+        if os.path.exists(outfile): os.remove(outfile)
+        url_store.pop(msg_id, None)
+        try: await q.message.delete()
         except: pass
-    url_store.pop(msg_id, None)
-    try: await q.message.delete()
-    except: pass
+        try: await eyes_message.delete()
+        except: pass
+
 
 # ====== Admin Handlers ======
 async def admin_reply_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
