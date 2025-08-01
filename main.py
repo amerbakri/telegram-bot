@@ -29,7 +29,6 @@ with open("filtered_cookies.txt", "w", encoding="utf-8") as f:
     f.writelines(filtered)
 
 # استخدم الملف المصفّى بعد كذا
-#COOKIES_FILE = "filtered_cookies.txt"
 
 # ————— Logging —————
 logging.basicConfig(
@@ -467,13 +466,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         outfile = f"{msg_id}.mp4"
         fmt = quality_map.get(quality, "best")
-        cmd = [
-            "yt-dlp", "--cookies", COOKIES_FILE,
-            "-f", fmt,
-            "--merge-output-format", "mp4",
-            "-o", outfile,
-            url
-        ]
+    cmd = [
+        "yt-dlp",
+        "--cookies-from-browser", "chrome",   # ← يقرأ الكوكيز من Chrome مباشرة
+        "-f", fmt,
+        "--merge-output-format", "mp4",
+        "-o", outfile,
+        url
+    ]
         caption = f"🎬 جودة {quality}p"
 
     # ابدأ التحميل في الخلفية
