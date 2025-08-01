@@ -397,6 +397,9 @@ async def message_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     kb = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("✨ اختر الصيغة المطلوبة:", reply_markup=kb)
+    
+from telegram import Update
+from telegram.ext import ContextTypes
 
 # ————— Download Handler —————
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
