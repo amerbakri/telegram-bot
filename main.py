@@ -457,7 +457,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         outfile = f"{msg_id}.mp3"
         cmd = [
             "yt-dlp",
-            "--cookies-from-browser", "chrome",  # يقرأ الكوكيز من Chrome مباشرة
+            "--cookies", COOKIES_FILE,
             "-f", "bestaudio[ext=m4a]/bestaudio/best",
             "--extract-audio", "--audio-format", "mp3",
             "-o", outfile,
@@ -469,7 +469,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fmt = quality_map.get(quality, "best")
         cmd = [
             "yt-dlp",
-            "--cookies-from-browser", "chrome",
+            "--cookies", COOKIES_FILE,
             "-f", fmt,
             "--merge-output-format", "mp4",
             "-o", outfile,
