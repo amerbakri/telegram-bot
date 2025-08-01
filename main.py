@@ -148,8 +148,9 @@ async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
 
 # ————— /start —————
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    store_user(user)
+    from telegram import Update
+    from telegram.ext import ContextTypes
+
 
     # Admin menu
     if user.id == ADMIN_ID:
