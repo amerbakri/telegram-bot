@@ -1,7 +1,3 @@
-python-telegram-bot[webhooks]==20.3
-Flask
-yt-dlp
-openai==0.28
-pytesseract
-Pillow
+python-telegram-bot==13.15
+Flask==2.3.3
 pytube==15.0.0
