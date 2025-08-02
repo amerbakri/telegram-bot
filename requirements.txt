@@ -4,3 +4,4 @@ yt-dlp
 openai==0.28
 pytesseract
 Pillow
+pytube==15.0.0
